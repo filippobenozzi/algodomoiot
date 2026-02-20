@@ -19,7 +19,6 @@
 <div class="row">
 <button id="reload">Ricarica</button>
 <button id="addBoard">Aggiungi scheda</button>
-<button id="save">Salva</button>
 <button id="downloadJson">Scarica JSON</button>
 <button id="uploadJson">Carica JSON</button>
 <input id="importFile" type="file" accept=".json,application/json" style="display:none">
@@ -51,6 +50,7 @@
 <pre id="sys"></pre>
 </div>
 <div class="box"><div id="boards"></div></div>
+<div class="box"><div class="row"><button id="save">Salva</button></div></div>
 <pre id="msg"></pre>
 <script>
 const $=s=>document.querySelector(s),msg=$("#msg"),boardsEl=$("#boards"),sysEl=$("#sys"),imp=$("#importFile");
