@@ -590,6 +590,24 @@ def split_temperature(value: float) -> tuple[int, int]:
     return clamp_int(int_part, 0, 99), clamp_int(dec_part, 0, 9)
 
 
+def parse_thermostat_power(value: str) -> bool:
+    v = normalize_text(value, "").lower()
+    if v in {"on", "1", "true", "yes", "acceso", "attivo"}:
+        return True
+    if v in {"off", "0", "false", "no", "spento"}:
+        return False
+    raise ValueError("power non valido: usa on/off")
+
+
+def parse_thermostat_mode(value: str) -> str:
+    v = normalize_text(value, "").lower()
+    if v in {"winter", "inverno", "heat"}:
+        return "winter"
+    if v in {"summer", "estate", "cool"}:
+        return "summer"
+    raise ValueError("mode non valido: usa winter/summer")
+
+
 def infer_light_state(channel: int, poll: dict[str, Any] | None, fallback: Any, action: str | None) -> bool | None:
     if isinstance(poll, dict):
         bit = 1 << (channel - 1)
@@ -726,6 +744,12 @@ def build_status(refresh: bool) -> dict[str, Any]:
                 setpoint = prev.get("setpoint") if isinstance(prev, dict) else None
                 if not isinstance(setpoint, (int, float)):
                     setpoint = None
+                mode = prev.get("mode") if isinstance(prev, dict) else None
+                if mode not in {"winter", "summer"}:
+                    mode = "winter"
+                is_on = prev.get("isOn") if isinstance(prev, dict) else None
+                if not isinstance(is_on, bool):
+                    is_on = True
                 payload_board["channels"].append(
                     {
                         "id": item_id,
@@ -734,6 +758,8 @@ def build_status(refresh: bool) -> dict[str, Any]:
                         "room": ch_room,
                         "temperature": poll.get("temperature") if isinstance(poll, dict) else None,
                         "setpoint": setpoint,
+                        "mode": mode,
+                        "isOn": is_on,
                         "boardSetpoint": poll.get("setpoint") if isinstance(poll, dict) else None,
                     }
                 )
@@ -748,6 +774,8 @@ def build_status(refresh: bool) -> dict[str, Any]:
                         "channel": ch,
                         "temperature": poll.get("temperature") if isinstance(poll, dict) else None,
                         "setpoint": setpoint,
+                        "mode": mode,
+                        "isOn": is_on,
                         "boardSetpoint": poll.get("setpoint") if isinstance(poll, dict) else None,
                     }
                 )
@@ -846,10 +874,6 @@ def api_shutter(query: dict[str, list[str]]) -> dict[str, Any]:
 
 
 def api_thermostat(query: dict[str, list[str]]) -> dict[str, Any]:
-    setpoint = to_float(query_value(query, "set"), float("nan"))
-    if not math.isfinite(setpoint):
-        raise ValueError("set mancante o non valido")
-
     cfg = get_config()
     entity = find_entity(
         cfg,
@@ -861,13 +885,77 @@ def api_thermostat(query: dict[str, list[str]]) -> dict[str, Any]:
     if entity is None:
         raise LookupError("Termostato non trovato")
 
-    i, d = split_temperature(setpoint)
-    frame = send_frame(entity["address"], 0x5A, [i, d])
+    set_raw = query_value(query, "set")
+    mode_raw = query_value(query, "mode")
+    power_raw = query_value(query, "power")
+
+    requested_setpoint: float | None = None
+    if set_raw.strip():
+        s = to_float(set_raw, float("nan"))
+        if not math.isfinite(s):
+            raise ValueError("set non valido")
+        requested_setpoint = s
+
+    requested_mode: str | None = None
+    if mode_raw.strip():
+        requested_mode = parse_thermostat_mode(mode_raw)
+
+    requested_power: bool | None = None
+    if power_raw.strip():
+        requested_power = parse_thermostat_power(power_raw)
+
+    if requested_setpoint is None and requested_mode is None and requested_power is None:
+        raise ValueError("serve almeno un parametro: set, power o mode")
+
+    snapshot = get_state()
+    prev = snapshot.get("thermostats", {}).get(entity["id"], {})
+
+    next_setpoint = prev.get("setpoint") if isinstance(prev, dict) else None
+    if not isinstance(next_setpoint, (int, float)):
+        next_setpoint = 21.0
+
+    next_mode = prev.get("mode") if isinstance(prev, dict) else None
+    if next_mode not in {"winter", "summer"}:
+        next_mode = "winter"
+
+    next_power = prev.get("isOn") if isinstance(prev, dict) else None
+    if not isinstance(next_power, bool):
+        next_power = True
+
+    frames: list[dict[str, Any]] = []
+
+    if requested_mode is not None:
+        mode_byte = 1 if requested_mode == "summer" else 0
+        mode_frame = send_frame(entity["address"], 0x6B, [mode_byte])
+        frames.append({"type": "mode", "frame": mode_frame})
+        next_mode = requested_mode
+
+    if requested_setpoint is not None:
+        next_setpoint = requested_setpoint
+
+    if requested_power is False:
+        off_frame = send_frame(entity["address"], 0x5A, [0, 0])
+        frames.append({"type": "power_off", "frame": off_frame})
+        next_power = False
+    else:
+        if requested_setpoint is not None:
+            i, d = split_temperature(next_setpoint)
+            set_frame = send_frame(entity["address"], 0x5A, [i, d])
+            frames.append({"type": "setpoint", "frame": set_frame})
+            next_power = True
+        elif requested_power is True:
+            i, d = split_temperature(next_setpoint)
+            on_frame = send_frame(entity["address"], 0x5A, [i, d])
+            frames.append({"type": "power_on", "frame": on_frame})
+            next_power = True
+
     now = int(time.time() * 1000)
 
     def mutator(state: dict[str, Any]) -> None:
         state.setdefault("thermostats", {})[entity["id"]] = {
-            "setpoint": setpoint,
+            "setpoint": next_setpoint,
+            "mode": next_mode,
+            "isOn": next_power,
             "updatedAt": now,
         }
         state["updatedAt"] = now
@@ -879,7 +967,16 @@ def api_thermostat(query: dict[str, list[str]]) -> dict[str, Any]:
     except Exception:
         pass
 
-    return {"ok": True, "entity": entity, "setpoint": setpoint, "frame": frame}
+    first_frame = frames[0]["frame"] if frames else None
+    return {
+        "ok": True,
+        "entity": entity,
+        "setpoint": next_setpoint,
+        "mode": next_mode,
+        "isOn": next_power,
+        "frame": first_frame,
+        "frames": frames,
+    }
 
 
 def api_poll(query: dict[str, list[str]]) -> dict[str, Any]:

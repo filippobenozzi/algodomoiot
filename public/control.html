@@ -76,9 +76,16 @@ function thermoCard(x){
 const id='sp-'+sid(x.id);
 const t=x.temperature===null?'?':Number(x.temperature).toFixed(1)+'C';
 const s=x.setpoint===null?'?':Number(x.setpoint).toFixed(1)+'C';
-return '<div class="card"><div class="tt">'+esc(x.name)+'</div><div class="meta">'+esc(x.boardName)+' · ch '+x.channel+'</div><div class="state unk">T '+t+' · SET '+s+'</div><div class="tset">'+
+const p=x.isOn===true?'ON':'OFF';
+const pcls=x.isOn===true?'on':'off';
+const m=(x.mode==='summer'?'ESTATE':'INVERNO');
+return '<div class="card"><div class="tt">'+esc(x.name)+'</div><div class="meta">'+esc(x.boardName)+' · ch '+x.channel+'</div><div class="state '+pcls+'">'+p+'</div> <div class="state unk">'+m+'</div> <div class="state unk">T '+t+' · SET '+s+'</div><div class="a">'+
+'<button class="pri" onclick="cmdThermoPower(\''+sq(x.id)+'\',\'on\')">ON</button>'+
+'<button onclick="cmdThermoPower(\''+sq(x.id)+'\',\'off\')">OFF</button>'+
+'<button onclick="cmdThermoMode(\''+sq(x.id)+'\',\'winter\')">INVERNO</button>'+
+'<button onclick="cmdThermoMode(\''+sq(x.id)+'\',\'summer\')">ESTATE</button></div><div class="tset">'+
 '<input id="'+id+'" type="number" step="0.1" value="'+esc(x.setpoint??21)+'">'+
-'<button class="pri" onclick="cmdThermo(\''+sq(x.id)+'\',\''+id+'\')">SET</button></div></div>';
+'<button class="pri" onclick="cmdThermoSet(\''+sq(x.id)+'\',\''+id+'\')">SET</button></div></div>';
 }
 
 function roomBlock(r){
@@ -107,13 +114,25 @@ finally{running=false}
 }
 
 async function cmd(url){
-try{const r=await getJson(url);if(r.frame?.hex)note('Comando: '+r.frame.hex);else note('Comando eseguito');await refresh()}
+try{
+const r=await getJson(url);
+if(Array.isArray(r.frames)&&r.frames.length){
+note('Comandi: '+r.frames.map(x=>x.type+': '+(x.frame?.hex||'?')).join(' | '));
+}else if(r.frame?.hex){
+note('Comando: '+r.frame.hex);
+}else{
+note('Comando eseguito');
+}
+await refresh()
+}
 catch(e){note(e.message,true)}
 }
 
 window.cmdLight=(id,action)=>cmd('/api/cmd/light?token='+encodeURIComponent(token)+'&id='+encodeURIComponent(id)+'&action='+encodeURIComponent(action));
 window.cmdShutter=(id,action)=>cmd('/api/cmd/shutter?token='+encodeURIComponent(token)+'&id='+encodeURIComponent(id)+'&action='+encodeURIComponent(action));
-window.cmdThermo=(id,inputId)=>{const v=document.getElementById(inputId)?.value;return cmd('/api/cmd/thermostat?token='+encodeURIComponent(token)+'&id='+encodeURIComponent(id)+'&set='+encodeURIComponent(v));};
+window.cmdThermoSet=(id,inputId)=>{const v=document.getElementById(inputId)?.value;return cmd('/api/cmd/thermostat?token='+encodeURIComponent(token)+'&id='+encodeURIComponent(id)+'&set='+encodeURIComponent(v));};
+window.cmdThermoPower=(id,p)=>cmd('/api/cmd/thermostat?token='+encodeURIComponent(token)+'&id='+encodeURIComponent(id)+'&power='+encodeURIComponent(p));
+window.cmdThermoMode=(id,m)=>cmd('/api/cmd/thermostat?token='+encodeURIComponent(token)+'&id='+encodeURIComponent(id)+'&mode='+encodeURIComponent(m));
 
 async function init(){
 try{const c=await getJson('/api/config');token=c.apiToken||'';if(!token)throw new Error('Token non configurato: apri /config');note('Token caricato.');await refresh()}

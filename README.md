@@ -17,7 +17,7 @@ Da `/config` ora puoi programmare tutto senza editare JSON manualmente:
 - indirizzo
 - tipo (`light`, `shutter`, `thermostat`)
 - range canali
-- nome di ogni canale
+- nome e stanza di ogni canale
 
 ## Formato configurazione (salvato in JSON)
 
@@ -76,6 +76,8 @@ Server default: `http://localhost:8080`
   - `action`: `up|down|stop`
 - Termostato:
   - `GET /api/cmd/thermostat?token=...&id=<board-id-cN>&set=21.5`
+  - `GET /api/cmd/thermostat?token=...&id=<board-id-cN>&power=on|off`
+  - `GET /api/cmd/thermostat?token=...&id=<board-id-cN>&mode=winter|summer`
 - Polling singola scheda:
   - `GET /api/cmd/poll?token=...&address=1`
 - Programmazione indirizzo (modalità Prog):

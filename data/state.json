@@ -1,7 +1,40 @@
 {
   "boards": {},
-  "lights": {},
+  "lights": {
+    "luci-1-c1": {
+      "isOn": null,
+      "updatedAt": 1771599135015
+    },
+    "luci-1-c2": {
+      "isOn": null,
+      "updatedAt": 1771599135015
+    },
+    "luci-1-c3": {
+      "isOn": null,
+      "updatedAt": 1771599135015
+    },
+    "luci-1-c4": {
+      "isOn": null,
+      "updatedAt": 1771599135015
+    },
+    "luci-1-c5": {
+      "isOn": null,
+      "updatedAt": 1771599135015
+    },
+    "luci-1-c6": {
+      "isOn": null,
+      "updatedAt": 1771599135015
+    },
+    "luci-1-c7": {
+      "isOn": null,
+      "updatedAt": 1771599135015
+    },
+    "luci-1-c8": {
+      "isOn": null,
+      "updatedAt": 1771599135015
+    }
+  },
   "shutters": {},
   "thermostats": {},
-  "updatedAt": 0
+  "updatedAt": 1771599135015
 }
