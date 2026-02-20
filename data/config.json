@@ -1,0 +1,56 @@
+{
+  "gateway": {
+    "host": "127.0.0.1",
+    "port": 1470,
+    "timeoutMs": 1200
+  },
+  "apiToken": "cambia-questo-token",
+  "boards": [
+    {
+      "id": "board-1",
+      "name": "Scheda 1",
+      "address": 1,
+      "inputs": [
+        {
+          "index": 1,
+          "name": "Ingresso 1",
+          "room": "Soggiorno",
+          "enabled": true,
+          "g2": 0,
+          "g3": 0,
+          "g4": 0,
+          "targetAddress": 1
+        }
+      ]
+    }
+  ],
+  "entities": {
+    "lights": [
+      {
+        "id": "light-1",
+        "name": "Luce Soggiorno",
+        "room": "Soggiorno",
+        "address": 1,
+        "relay": 1
+      }
+    ],
+    "shutters": [
+      {
+        "id": "shutter-1",
+        "name": "Tapparella Soggiorno",
+        "room": "Soggiorno",
+        "address": 1,
+        "channel": 1
+      }
+    ],
+    "thermostats": [
+      {
+        "id": "thermo-1",
+        "name": "Termostato Soggiorno",
+        "room": "Soggiorno",
+        "address": 1,
+        "setpoint": 21
+      }
+    ]
+  }
+}

@@ -1,0 +1,43 @@
+ON
+Comando Configurazione Tempi Pulsanti Tapparelle (persistenza tasti) (OxS5e)
+Invio
+E_IN1,E_ADD1,E_CH1,E_G1,E_G2,E_G3,E_G4,E_G5,E_G6, E_G7,E_G8,E_G9,E_G10,E£_EN1
+E_IN1L 0x49
+E_ADD_1 0x01-0xFE
+E_CH1 Ox5e
+E_G1 =Tempo Tasti tapparella_1
+E_G2 =Tempo Tasti tapparella_2
+E_G3 0x00
+E_G4 0x00
+E_G5 0x00
+E_G6 0x00
+E_G7 0x00
+E_G8 0x00
+E_G9 0x00
+E_G10 0x00
+E_EN1L 0x46
+G1,G2: (si possono dare tempi diversi per ogni tapparella)
+1=0,5 Sec; 2=1 Sec ; 3=1,5 Sec; 4=2 Sec; 5=2,5 Sec; 6=3 Sec; 7=3,5 Sec;
+8=4 Sec; 9=4,5 Sec
+Ricezione
+E_IN1,E_ADD1,E_CH1,E_G1,E_G2,E_G3,E_G4,E_G5,E_G6, E_G7,E_G8,E_G9,E_G10,E£_EN1
+E_IN1L 0x49
+E_ADD_1 0x01-0xFE
+E_CH1 Ox5e
+E_G1 =Tempo Tasti tapparella_1
+E_G2 =Tempo Tasti tapparella_2
+E_G2 0x00
+E_G3 0x00
+E_G4 0x00
+E_G5 0x00
+E_G6 0x00
+E_G7 0x00
+E_G8 0x00
+E_G9 0x00
+E_G10 0x00
+E_EN1L 0x46
+G1,G2: (si possono dare tempi diversi per ogni tapparella)
+1=0,5 Sec; 2=1 Sec ; 3=1,5 Sec; 4=2 Sec; 5=2,5 Sec; 6=3 Sec; 7=3,5 Sec;
+8=4 Sec; 9=4,5 Sec
+
+10

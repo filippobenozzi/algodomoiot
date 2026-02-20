@@ -1,0 +1,41 @@
+ON
+Comando configurazione velocita dissolvenza Up/down luce Dimmer (Ox6e) Invio
+E_IN1,E_ADD1,£_CH1, E_G1, E_G2 ,E_G3,E_G4,E_G5, E_G6,E_G7, E_G8 ,E_G9, E_G10,E_EN1
+E_IN1L 0x49
+E_ADD_1 0x01-OxFE
+E_CH1 Ox6e
+E_G1 Gl=ff (Default 50) G1=1-255 passi velocita
+E_G2 0x00
+E_G3 0x00
+E_G4 0x00
+E_G5 0x00
+E_G6 0x00
+E_G7 0x00
+E_G8 0x00
+E_G9 0x00
+E_G10 0x00
+E_EN1L 0x46
+Ricezione
+E_IN1,E_ADD1,£_CH1, E_G1, E_G2 ,E_G3,E_G4,E_G5, E_G6,E_G7, E_G8 ,E_G9, E_G10,E_EN1
+E_IN1L 0x49
+E_ADD_1 0x01-OxFE
+E_CH1 Ox6e
+E_G1 Gl=ff (Default 50) G1=1-255 passi velocita
+E_G2 0x00
+E_G3 0x00
+E_G4 0x00
+E_G5 0x00
+E_G6 0x00
+E_G7 0x00
+E_G8 0x00
+E_G9 0x00
+E_G10 0x00
+E_EN1L 0x46
+Valore 50 equivale al tempo di default, tempo classico Dimmer normale.
+Attenzione se si mette tempo =1 equivale a un tempo molto alto per arrivare alla
+Massima o Minima luminosita (circa 20 sec) 0 se si mette 255 il tempo al contrario
+E velocissimo meno di un secondo.
+Questi tempi in genere si variano per ottenere effetti di luce in particolari scenari (esempio alba
+Tramonto ecc...)
+
+16

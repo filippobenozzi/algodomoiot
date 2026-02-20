@@ -1,0 +1,38 @@
+0
+ON
+Protocollo Algo_Domo Michele Berton
+ver 1.6 Dicembre 2012
+Modulo Dati :
+Velocita 9600 Bit per secondo
+Bit Dati 8
+Parita N
+Bit stop 1
+TCP/IP porta 1470 (configurabi le)
+Struttura Pacchetto dati Algo_Domo
+E_IN1L VAR BYTE "start. CIN_1 0x49)
+E_ADD VAR BYTE "Indirizzo (ADD Ox00 <-> OXxFF)
+E_CH VAR BYTE "Comando CCH 0x50 <-> OX 5E)
+E_G1 VAR BYTE "Dato (D1 Ox00 <-> Ox6D)
+E_G2 VAR BYTE "Dato (b2 Ox00 <-> OxFF)
+E_G3 VAR BYTE "Dato (D3 Ox00 <-> OxFF)
+E_G4 VAR BYTE "Dato (D4 Ox00 <-> OxFF)
+E_G5S VAR BYTE "Dato (D6 Ox00 <-> OxFF)
+E_G7 VAR BYTE "Dato (D7 Ox00 <-> OxFF)
+E_G8& VAR BYTE "Dato (D8 Ox00 <-> OxFF)
+E_G9 VAR BYTE "Dato (D9 Ox00 <-> OxFF)
+E_G10 VAR BYTE "Dato (CD10 Ox00 <-> OxFF)
+E_ENL VAR BYTE "End CEN_1 0x46)
+Programmazione Indirizzo Scheda ©
+I] dispositivo ha bisogno di essere indirizzato, per questo seguire la seguente
+procedura:
+premere il tastino "Prog" Cogni Scheda AlgoDomo ha un tastino Prog)
+A questo punto la scheda accende fisso il Led Run (giallo)ed invia 4 Byte :
+0x41, 0x64, 0x64, Indi rizzo
+Indirizzo = 0x00 - Oxfe
+Entro 5 secondi inviare il valore dell’indirizzo da memorizzare : 0x00 <-> Oxfe
+la scheda rispodera solo con 1 byte che corrisponde al valore dell'indirizzo
+inviato per poi tornare in modalita operativa (normale funzionamento, lampeggio
+lento del Led RUN
+Se non si invia nessun dato la scheda dopo 5 secondi torna nello stato
+operativo !
+1

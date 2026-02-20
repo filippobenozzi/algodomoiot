@@ -1,0 +1,35 @@
+ON
+Comando configurazione Liste Scenari (0x58) Invio
+E_IN1,E_ADD1,E_CH1,E_G1,E_G2,E_G3,E_G4,E_G5,E_G6, E_G7,E_G8,E_G9,E_G10,E£_EN1
+E_IN1L 0x49
+E_ADD_1 0x01-0xFE
+E_CHL 0x58
+E_G1 Lista 01,08 (8 liste )
+E_G2 Relé 1 (O=non in lista , 1= In lista)
+E_G3 Relé 2 (O=non in lista , 1= In lista)
+E_G4 Relé 3 (O=non in lista , 1= In lista)
+E_G5 Relé 4 (O=non in lista , 1= In lista)
+E_G6 Lista Attiva G6=1 , Lista non Attiva G6=0
+E_G7 0x00
+E_G8& 0x00
+E_G9 0x00
+E_G10 0x00
+E_ENL 0x46
+Ricezione
+E_IN1,E_ADD1,E_CH1,E_G1,E_G2,E_G3,E_G4,E_G5,E_G6, E_G7,E_G8,E_G9,E_G10,E£_EN1
+E_IN1L 0x49
+E_ADD_1 0x01-0xFE
+E_CHL 0x58
+E_G1 Lista 01,08 (8 liste )
+E_G2 Relé 1 (O=non in lista , 1= In lista)
+E_G3 Relé 2 (O=non in lista , 1= In lista)
+E_G4 Relé 3 (O=non in lista , 1= In lista)
+E_G5 Relé 4 (O=non in lista , 1= In lista)
+E_G6 Lista Attiva G6=1 , Lista non Attiva G6=0
+E_G7 0x00
+E_G8& 0x00
+E_G9 0x00
+E_G10 0x00
+E_ENL 0x46
+
+12

@@ -1,0 +1,50 @@
+0
+
+ON
+Polling Esteso significato Bit
+E_G1l = TIvVe
+
+"variabile Versione Tipo e Versione SW Scheda
+TO VAR Tive.0O
+T1 VAR Tive.1
+T2 VAR Tive.2
+T3 VAR Tive.3
+vO VAR Tive.4
+V1 VAR Tive.5
+V2 VAR Tive.6
+V3 VAR Tive.7
+Esempio
+1= 410, 2= 210, 3 =110, 4 = 41, 5 = Dimmer, 6 = 2 Tapparelle, 7 = Mista,
+Tapparella, 8 = Termostato, 9 = Power, 10 810, 11= 4 Tapparelle ;
+"Tipo Scheda =1 410
+TO=1
+T1=0
+T2=0
+T3=0
+"versione Release =3
+vo=1
+V1=1
+v2=0
+v3=0
+E_G2=0ul VAR BYTE "'Variabile x di Stato Uscite (8 Flags bit di oul)
+E_G3=Inl1 VAR BYTE "Variabile x di Stato Ingressi(8 Flags bit di In1)
+'* ASSEGNAZIONE bit Variabile Stato Uscite (Oul) *
+fO VAR 0u1.0 "Bit flag "Stato Relé #1 " C1=on, O=of f)
+f1 VAR Oul.1 "Bit flag "Stato Relé #2 " (1=on, O=of f)
+f2 VAR Oul.2 "Bit flag "Stato Relé #3 " C1=on, O=of f)
+f3 VAR Oul.3 "Bit flag "Stato Relé #4 " C1=on, O=of f)
+f4 VAR Oul.4 "Bit flag "Stato Relé #5 " (1l=on, O=of f)
+f5 VAR Oul.5 "Bit flag "Stato Relé #6 " (1=on, O=of f)
+f6 VAR 0u1.6 "Bit flag "Stato Relé #7 " C1=on, O=of f)
+f7 VAR Oul.7 "Bit flag "Stato Relé #8 " C1=on, O=of f)
+'* ASSEGNAZIONE bit Variabile Stato Igressi (In1) *
+kO VAR In1.0 "Bit flag "Stato Ingresso_1 " (O=attivo,l=non attivo)
+kL VAR In1.1 "Bit flag "Stato Ingresso_2 " CO=attivo,l=non attivo)
+k2 VAR IN1.2 "Bit flag "Stato Ingresso_3 " (O=attivo,l=non attivo)
+k3 VAR In1.3 "Bit flag "Stato Ingresso_4 " (O=attivo,l=non attivo)
+k4 VAR Inl1.4 "Bit flag "Stato Ingresso_5 " CO=attivo,l=non attivo)
+k5 VAR In1.5 "Bit flag "Stato Ingresso_6 " (O=attivo,l=non attivo)
+k6 VAR In1.6 "Bit flag "Stato Ingresso_7 " CO=attivo,l=non attivo)
+k7 VAR IN1.7 "Bit flag "Stato Ingresso_8 " (O=attivo,l=non attivo)
+Attivi anche in 5-8 , out 5-8
+4

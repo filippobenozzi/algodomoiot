@@ -1,0 +1,42 @@
+ON
+Comando Attiva/Disattiva Output Attiva disattiva Relé (1,2,3,4,5,6,7,8) Invio
+E_IN1,E_ADD1,E_CH1,E_G1,E_G2,E_G3,E_G4,E_G5,E_G6, E_G7,E_G8,E_G9,E_G10,E£_EN1
+E_IN1L 0x49
+E_ADD_1 0x01-0xFE
+E_CH1 0x51, 0x52 ,0x53 ,0x54,0x65 ,Ox66,0x67,0x68 (da Relé_#1 a Relé_#8)
+E_G1 Nota *
+E_G2 0x00
+E_G3 0x00
+E_G4 0x00
+E_G5 0x00
+E_G6 0x00
+E_G7 0x00
+E_G8 0x00
+E_G9 0x00
+E_G10 0x00
+E_EN1L 0x46
+Ricezione
+E_IN1,E_ADD1,E_CH1,E_G1,E_G2,E_G3,E_G4,E_G5,E_G6, E_G7,E_G8,E_G9,E_G10,E£_EN1
+E_IN1L 0x49
+E_ADD_1 0x01-0xFE
+E_CH1L 0x51, 0x52 ,0x53,0x54 (Relé_#1, Relé_#2 ,Rel@_#3 ,Relé_#4)
+E_G1 Nota *
+E_G2 0x00
+E_G3 0x00
+E_G4 0x00
+E_G5 0x00
+E_G6 0x00
+E_G7 0x00
+E_G8& 0x00
+E_G9 0x00
+E_G10 0x00
+E_EN1L 0x46
+Nota *
+E_G1:
+0x41 relé ON
+0x53 Relé OFF
+0x50 Inpulso Relé (500 ms)
+0x54 toggle Relé senza _ risposta
+0x55 toggle Relé con risposta
+
+5

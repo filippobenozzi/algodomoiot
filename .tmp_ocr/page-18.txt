@@ -1,0 +1,35 @@
+ON
+Comando Termostato/Sonda Temperatura Offset (Ox6a) Invio (non attivo)
+E_IN1,E_ADD1,£_CH1,E_G1,E_G2,E_G3,E_G4,E_G5,E_G6,E_G7,E_G8,E_G9, £_G10,E_EN1
+E_IN1 0x49
+E_ADD_1 0x01-0xFE
+E_CH1L Ox6a
+E_G1 G1=Decine
+E_G2 G2=Decimali
+E_G3 G3=0 o 255 No Offset ; G3=1 + Offset ; G3=2 - Offset
+E_G4 0x00
+E_G5 0x00
+E_G6 0x00
+E_G7 0x00
+E_G8 0x00
+E_G9 0x00
+E_G10 0x00
+E_EN1 0x46
+Ricezione
+E_IN1,E_ADD1,£_CH1,E_G1,E_G2,E_G3,E_G4,E_G5,E_G6,E_G7,E_G8,E_G9, £_G10,E_EN1
+E_IN1 0x49
+E_ADD_1 0x01-0xFE
+E_CH1L Ox6a
+E_G1 G1=Decine
+E_G2 G2=Decimali
+E_G3 G3=0 o 255 No Offset ; G3=1 + Offset ; G3=2 - offset
+E_G4 0x00
+E_G5 0x00
+E_G6 0x00
+E_G7 0x00
+E_G8 0x00
+E_G9 0x00
+E_G10 0x00
+E_EN1 0x46
+
+18

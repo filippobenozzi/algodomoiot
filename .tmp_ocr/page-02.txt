@@ -1,0 +1,37 @@
+0
+
+ON
+Comandi :
+Hex 40... . Polling Esteso Scheda (nuove Rel 3.0)
+Hex 51... . Gestione (Relé_#1)
+Hex 52... . Gestione (Relé_#2)
+Hex 53... . Gestione CRe1ée_#3)
+Hex 54... . Gestione (Relé_#4)
+Hex 65... .. Gestione CRelée_#5)
+Hex 66... . Gestione (Relé_#6)
+Hex 67... . Gestione (Relé_#7)
+Hex 68... . Gestione (Relé_#8)
+Hex 57... . Attiva Disattiva tutti Relé Singola
+Hex 55... . Configurazione Ingressi
+Hex 56... . Stato Conf. Ingressi
+Scheda
+Hex 58... . Cconfigurazione | liste Scenari
+Hex 59... . Stato configurazione liste Scenari
+Hex AA... . Attivazione liste Scenari
+Hex 5b... . Gestione Dimmer . .
+Hex 6€ .... Configurazione Tempo Dissolvenza Dimmer
+Hex 5c .... Gestione Tapparelle .
+Hex 5d... . Tempi azionamento motori Tapparelle .
+Hex 5e.... Tempi Pulsanti Tapparelle (persistenza tasti) .
+Hex 5f . 1... Tempo Ritardo su Attivazione/Disattivazione da Scenario
+Hex 5a... . Gestione Termostato Set Temperatura
+Hex 6a... . Gestione Termostato Offset
+Hex 6b... . Gestione Termostato Set Estate/Inverno .
+Hex 6C .... Gestione Termostato Set Temperature Scenari .
+Hex 6d... . Gestione Termostato Polling in chiaro (ASCII Stampabile)
+Hex 8a. ... configurazione durata impulso rele
+Hex 8b... . configurazione numero scenario out algo_win .
+Hex 8c... . configurazione soglia invio Scenario chiudi Algo_wind
+Hex 8d. ... Scarico / Carico Configurazione Scheda
+
+2
