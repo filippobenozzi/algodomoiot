@@ -1201,6 +1201,14 @@ def api_admin_restart(query: dict[str, list[str]]) -> dict[str, Any]:
         action = "restart-app"
         label = "algodomoiot.service"
     elif service in {"newt", "newt.service"}:
+        cfg = get_config()
+        newt = as_dict(cfg.get("newt"))
+        enabled = bool_value(newt.get("enabled"))
+        newt_id = normalize_text(newt.get("id"), "")
+        secret = normalize_text(newt.get("secret"), "")
+        endpoint = normalize_text(newt.get("endpoint"), "")
+        if not enabled or not newt_id or not secret or not endpoint:
+            raise ValueError("newt non configurato: abilita NEWT e compila ID/SECRET/ENDPOINT in /config")
         action = "restart-newt"
         label = "newt.service"
     else:
