@@ -2,17 +2,23 @@
 Description=AlgoDomo Python Web/API Service
 After=network-online.target
 Wants=network-online.target
+Conflicts=serial-getty@ttyS0.service serial-getty@serial0.service
 
 [Service]
 Type=simple
 User=algodomoiot
 Group=algodomoiot
+PermissionsStartOnly=true
 WorkingDirectory=/opt/algodomoiot
 EnvironmentFile=-/etc/default/algodomoiot
 Environment=HOST=0.0.0.0
 Environment=PORT=8080
 Environment=ALGODOMO_CONFIG=/etc/algodomoiot/config.json
 Environment=ALGODOMO_STATE=/etc/algodomoiot/state.json
+ExecStartPre=-/usr/bin/systemctl stop serial-getty@ttyS0.service
+ExecStartPre=-/usr/bin/systemctl stop serial-getty@serial0.service
+ExecStartPre=/bin/sh -c 'if command -v fuser >/dev/null 2>&1; then fuser -k /dev/ttyS0 >/dev/null 2>&1 || true; fi'
+ExecStartPre=/bin/sh -c 'if [ -e /dev/serial0 ] && command -v fuser >/dev/null 2>&1; then fuser -k /dev/serial0 >/dev/null 2>&1 || true; fi'
 ExecStart=/usr/bin/python3 /opt/algodomoiot/app.py
 Restart=always
 RestartSec=2

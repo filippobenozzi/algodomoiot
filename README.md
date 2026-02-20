@@ -9,7 +9,17 @@ Applicazione Python leggera con:
 
 Tutti i dati vengono salvati in JSON locale.
 
-## Formato configurazione (come richiesto)
+## Interfaccia programmazione schede
+
+Da `/config` ora puoi programmare tutto senza editare JSON manualmente:
+
+- nome interno scheda
+- indirizzo
+- tipo (`light`, `shutter`, `thermostat`)
+- range canali
+- nome di ogni canale
+
+## Formato configurazione (salvato in JSON)
 
 In `config.json` ogni scheda ha solo:
 
@@ -92,6 +102,10 @@ L'installer:
 - crea JSON in `/etc/algodomoiot`
 - abilita/avvia `algodomoiot.service`
 - aggiunge utente servizio al gruppo `dialout` (se presente)
+- disabilita e mette in `mask` `serial-getty@ttyS0.service` e `serial-getty@serial0.service`
+- rimuove la console seriale da `cmdline.txt` (con backup automatico)
+
+Se l'installer modifica `cmdline.txt`, a fine installazione segnala di fare reboot.
 
 Pagine:
 

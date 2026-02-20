@@ -8,6 +8,7 @@ INSTALL_DIR="/opt/${APP_NAME}"
 CONFIG_DIR="/etc/${APP_NAME}"
 SERVICE_FILE="/etc/systemd/system/${APP_NAME}.service"
 ENV_FILE="/etc/default/${APP_NAME}"
+NEED_REBOOT=0
 
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -21,12 +22,43 @@ if ! command -v python3 >/dev/null 2>&1; then
   apt-get install -y python3
 fi
 
+if ! command -v fuser >/dev/null 2>&1; then
+  apt-get update
+  apt-get install -y psmisc
+fi
+
 if ! id -u "${APP_USER}" >/dev/null 2>&1; then
   useradd --system --home "${INSTALL_DIR}" --shell /usr/sbin/nologin "${APP_USER}"
 fi
 
 if getent group dialout >/dev/null 2>&1; then
   usermod -a -G dialout "${APP_USER}" || true
+fi
+
+# Disabilita in modo persistente il getty sulla seriale
+for unit in serial-getty@ttyS0.service serial-getty@serial0.service; do
+  systemctl disable --now "${unit}" >/dev/null 2>&1 || true
+  systemctl mask "${unit}" >/dev/null 2>&1 || true
+done
+
+# Rimuove console seriale dal kernel cmdline (persistente ai reboot)
+CMDLINE_FILE=""
+if [[ -f /boot/firmware/cmdline.txt ]]; then
+  CMDLINE_FILE="/boot/firmware/cmdline.txt"
+elif [[ -f /boot/cmdline.txt ]]; then
+  CMDLINE_FILE="/boot/cmdline.txt"
+fi
+
+if [[ -n "${CMDLINE_FILE}" ]]; then
+  CURRENT_CMDLINE="$(tr -d '\n' < "${CMDLINE_FILE}")"
+  UPDATED_CMDLINE="$(printf '%s\n' "${CURRENT_CMDLINE}" \
+    | sed -E 's/(^| )console=serial0,[^ ]+//g; s/(^| )console=ttyAMA0,[^ ]+//g; s/(^| )console=ttyS0,[^ ]+//g; s/[[:space:]]+/ /g; s/^ //; s/ $//')"
+
+  if [[ "${UPDATED_CMDLINE}" != "${CURRENT_CMDLINE}" && -n "${UPDATED_CMDLINE}" ]]; then
+    cp "${CMDLINE_FILE}" "${CMDLINE_FILE}.bak.$(date +%Y%m%d%H%M%S)"
+    printf '%s\n' "${UPDATED_CMDLINE}" > "${CMDLINE_FILE}"
+    NEED_REBOOT=1
+  fi
 fi
 
 mkdir -p "${INSTALL_DIR}" "${CONFIG_DIR}"
@@ -69,3 +101,7 @@ echo "Installazione completata."
 echo "Config: ${CONFIG_DIR}/config.json"
 echo "Override env: ${ENV_FILE}"
 echo "Pagine: http://<IP_RASPBERRY>:8080/config e /control"
+
+if [[ "${NEED_REBOOT}" -eq 1 ]]; then
+  echo "Nota: cmdline seriale aggiornato. Esegui un reboot per applicare completamente la modifica."
+fi
