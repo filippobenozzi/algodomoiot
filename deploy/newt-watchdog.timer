@@ -1,0 +1,11 @@
+[Unit]
+Description=AlgoDomo NEWT Watchdog Timer
+
+[Timer]
+OnBootSec=45s
+OnUnitActiveSec=30s
+AccuracySec=5s
+Unit=newt-watchdog.service
+
+[Install]
+WantedBy=timers.target

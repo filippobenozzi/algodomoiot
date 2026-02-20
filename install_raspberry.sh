@@ -8,9 +8,13 @@ INSTALL_DIR="/opt/${APP_NAME}"
 CONFIG_DIR="/etc/${APP_NAME}"
 SERVICE_FILE="/etc/systemd/system/${APP_NAME}.service"
 NEWT_SERVICE_FILE="/etc/systemd/system/newt.service"
+NEWT_WATCHDOG_SERVICE_FILE="/etc/systemd/system/newt-watchdog.service"
+NEWT_WATCHDOG_TIMER_FILE="/etc/systemd/system/newt-watchdog.timer"
 ENV_FILE="/etc/default/${APP_NAME}"
 NEWT_ENV_FILE="${CONFIG_DIR}/newt.env"
 ADMIN_DIR="/usr/local/lib/algodomoiot-admin"
+NEWT_WATCHDOG_SCRIPT="${ADMIN_DIR}/newt_watchdog.sh"
+STACK_CONTROL_BIN="/usr/local/bin/algodomoiot-stack"
 SUDOERS_FILE="/etc/sudoers.d/${APP_NAME}-admin"
 NEED_REBOOT=0
 
@@ -111,21 +115,25 @@ fi
 
 install -m 644 "${INSTALL_DIR}/deploy/algodomoiot.service" "${SERVICE_FILE}"
 install -m 644 "${INSTALL_DIR}/deploy/newt.service" "${NEWT_SERVICE_FILE}"
+install -m 644 "${INSTALL_DIR}/deploy/newt-watchdog.service" "${NEWT_WATCHDOG_SERVICE_FILE}"
+install -m 644 "${INSTALL_DIR}/deploy/newt-watchdog.timer" "${NEWT_WATCHDOG_TIMER_FILE}"
 install -m 750 "${INSTALL_DIR}/deploy/admin_control.sh" "${ADMIN_DIR}/admin_control.sh"
 install -m 750 "${INSTALL_DIR}/deploy/apply_network.sh" "${ADMIN_DIR}/apply_network.sh"
+install -m 750 "${INSTALL_DIR}/deploy/newt_watchdog.sh" "${NEWT_WATCHDOG_SCRIPT}"
+install -m 755 "${INSTALL_DIR}/deploy/stack_control.sh" "${STACK_CONTROL_BIN}"
 
 cat > "${SUDOERS_FILE}" <<EOF
 ${APP_USER} ALL=(root) NOPASSWD: ${ADMIN_DIR}/admin_control.sh *
 EOF
 
 chown -R "${APP_USER}:${APP_GROUP}" "${INSTALL_DIR}" "${CONFIG_DIR}"
-chown root:root "${ADMIN_DIR}/admin_control.sh" "${ADMIN_DIR}/apply_network.sh" "${SUDOERS_FILE}"
+chown root:root "${ADMIN_DIR}/admin_control.sh" "${ADMIN_DIR}/apply_network.sh" "${NEWT_WATCHDOG_SCRIPT}" "${STACK_CONTROL_BIN}" "${SUDOERS_FILE}"
 chmod 755 "${ADMIN_DIR}"
-chmod 750 "${ADMIN_DIR}/admin_control.sh" "${ADMIN_DIR}/apply_network.sh"
+chmod 750 "${ADMIN_DIR}/admin_control.sh" "${ADMIN_DIR}/apply_network.sh" "${NEWT_WATCHDOG_SCRIPT}"
 chmod 440 "${SUDOERS_FILE}"
 chmod 750 "${INSTALL_DIR}" "${CONFIG_DIR}"
 chmod 640 "${CONFIG_DIR}/config.json" "${CONFIG_DIR}/state.json"
-chmod 644 "${ENV_FILE}" "${SERVICE_FILE}" "${NEWT_SERVICE_FILE}"
+chmod 644 "${ENV_FILE}" "${SERVICE_FILE}" "${NEWT_SERVICE_FILE}" "${NEWT_WATCHDOG_SERVICE_FILE}" "${NEWT_WATCHDOG_TIMER_FILE}"
 chmod 640 "${NEWT_ENV_FILE}"
 
 if command -v visudo >/dev/null 2>&1; then
@@ -135,6 +143,7 @@ fi
 systemctl daemon-reload
 systemctl enable --now "${APP_NAME}.service"
 systemctl enable newt.service
+systemctl enable --now newt-watchdog.timer
 systemctl restart "${APP_NAME}.service"
 
 if grep -q '^NEWT_ENABLED=1' "${NEWT_ENV_FILE}" \
@@ -150,6 +159,8 @@ echo
 systemctl --no-pager --full status "${APP_NAME}.service" || true
 echo
 systemctl --no-pager --full status newt.service || true
+echo
+systemctl --no-pager --full status newt-watchdog.timer || true
 
 echo
 echo "Installazione completata."
@@ -157,6 +168,7 @@ echo "Config: ${CONFIG_DIR}/config.json"
 echo "Override env: ${ENV_FILE}"
 echo "Config newt: ${NEWT_ENV_FILE}"
 echo "Pagine: http://<IP_RASPBERRY>/ (control) e /config"
+echo "Gestione rapida: sudo algodomoiot-stack enable-all | disable-all | status"
 
 if [[ "${NEED_REBOOT}" -eq 1 ]]; then
   echo "Nota: cmdline seriale aggiornato. Esegui un reboot per applicare completamente la modifica."
