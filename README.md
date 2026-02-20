@@ -3,7 +3,7 @@
 Applicazione Python leggera con:
 
 - pagina configurazione: `/config`
-- pagina controllo: `/control` (entita divise per stanza)
+- pagina controllo: `/` (entita divise per stanza, `/control` compatibile)
 - API `GET` autenticate da token (in query)
 - invio comandi via seriale (`/dev/ttyS0` di default, 9600 8N1)
 
@@ -62,7 +62,7 @@ In locale (senza systemd):
 python3 app.py
 ```
 
-Server default: `http://localhost:8080`
+Server default: `http://localhost`
 
 ## API GET (token obbligatorio)
 
@@ -111,5 +111,5 @@ Se l'installer modifica `cmdline.txt`, a fine installazione segnala di fare rebo
 
 Pagine:
 
-- `http://<IP_RASPBERRY>:8080/config`
-- `http://<IP_RASPBERRY>:8080/control`
+- `http://<IP_RASPBERRY>/` (control)
+- `http://<IP_RASPBERRY>/config`

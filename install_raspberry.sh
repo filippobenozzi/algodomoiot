@@ -100,7 +100,7 @@ echo
 echo "Installazione completata."
 echo "Config: ${CONFIG_DIR}/config.json"
 echo "Override env: ${ENV_FILE}"
-echo "Pagine: http://<IP_RASPBERRY>:8080/config e /control"
+echo "Pagine: http://<IP_RASPBERRY>/ (control) e /config"
 
 if [[ "${NEED_REBOOT}" -eq 1 ]]; then
   echo "Nota: cmdline seriale aggiornato. Esegui un reboot per applicare completamente la modifica."

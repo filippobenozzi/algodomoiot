@@ -12,7 +12,7 @@ PermissionsStartOnly=true
 WorkingDirectory=/opt/algodomoiot
 EnvironmentFile=-/etc/default/algodomoiot
 Environment=HOST=0.0.0.0
-Environment=PORT=8080
+Environment=PORT=80
 Environment=ALGODOMO_CONFIG=/etc/algodomoiot/config.json
 Environment=ALGODOMO_STATE=/etc/algodomoiot/state.json
 ExecStartPre=-/usr/bin/systemctl stop serial-getty@ttyS0.service
@@ -22,6 +22,8 @@ ExecStartPre=/bin/sh -c 'if [ -e /dev/serial0 ] && command -v fuser >/dev/null 2
 ExecStart=/usr/bin/python3 /opt/algodomoiot/app.py
 Restart=always
 RestartSec=2
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
 PrivateTmp=true
 

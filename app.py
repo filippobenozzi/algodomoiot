@@ -1023,7 +1023,7 @@ class AlgoHandler(BaseHTTPRequestHandler):
             query = parse_qs(parsed.query, keep_blank_values=True)
 
             if path == "/":
-                self._redirect("/control")
+                self._serve_file(PUBLIC_DIR / "control.html", "text/html; charset=utf-8")
                 return
 
             if self.command == "GET" and path == "/config":
@@ -1149,7 +1149,7 @@ class AlgoHandler(BaseHTTPRequestHandler):
 def run() -> None:
     bootstrap()
     host = os.environ.get("HOST", "0.0.0.0")
-    port = to_port(os.environ.get("PORT", "8080"), 8080)
+    port = to_port(os.environ.get("PORT", "80"), 80)
     server = ThreadingHTTPServer((host, port), AlgoHandler)
     print(f"AlgoDomo Python in ascolto su http://{host}:{port}")
     server.serve_forever()
