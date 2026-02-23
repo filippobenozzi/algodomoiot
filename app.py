@@ -49,11 +49,17 @@ SHUTTER_ACTIONS = {
     "stop": 0x53,
 }
 
-ALLOWED_KINDS = {"light", "shutter", "thermostat"}
+DIMMER_COMMAND = 0x5B
+DIMMER_SET_KEY = 0x53
+DIMMER_MIN_LEVEL = 0
+DIMMER_MAX_LEVEL = 9
+
+ALLOWED_KINDS = {"light", "shutter", "thermostat", "dimmer"}
 MAX_CHANNEL_BY_KIND = {
     "light": 8,
     "shutter": 4,
     "thermostat": 8,
+    "dimmer": 1,
 }
 
 ROOT = Path(__file__).resolve().parent
@@ -109,6 +115,8 @@ def default_channel_name(kind: str, channel: int) -> str:
         return f"Luce {channel}"
     if kind == "shutter":
         return f"Tapparella {channel}"
+    if kind == "dimmer":
+        return f"Dimmer {channel}"
     return f"Termostato {channel}"
 
 
@@ -148,6 +156,7 @@ def default_state() -> dict[str, Any]:
         "lights": {},
         "shutters": {},
         "thermostats": {},
+        "dimmers": {},
         "updatedAt": 0,
     }
 
@@ -424,6 +433,7 @@ def normalize_state(raw: Any) -> dict[str, Any]:
         "lights": raw.get("lights") if isinstance(raw.get("lights"), dict) else {},
         "shutters": raw.get("shutters") if isinstance(raw.get("shutters"), dict) else {},
         "thermostats": raw.get("thermostats") if isinstance(raw.get("thermostats"), dict) else {},
+        "dimmers": raw.get("dimmers") if isinstance(raw.get("dimmers"), dict) else {},
         "updatedAt": int(to_number(raw.get("updatedAt"), 0)),
     }
 
@@ -636,7 +646,7 @@ def find_entity(cfg: dict[str, Any], kind: str, item_id: str, address_raw: str, 
         return None
 
     address = to_address(address_raw, -1)
-    channel = clamp_int(to_number(channel_raw, -1), 1, 8)
+    channel = clamp_int(to_number(channel_raw, -1), 1, MAX_CHANNEL_BY_KIND.get(kind, 8))
     if address < 0:
         return None
 
@@ -776,6 +786,7 @@ def decode_polling_frame(frame: dict[str, Any]) -> dict[str, Any]:
     type_and_release = to_byte(g[0], 0)
     output_mask = to_byte(g[1], 0)
     input_mask = to_byte(g[2], 0)
+    dimmer_level = clamp_int(to_number(g[3], 0), DIMMER_MIN_LEVEL, DIMMER_MAX_LEVEL)
     sign = -1 if g[6] == 0x2D else 1
     temp_i = to_byte(g[4], 0)
     temp_d = to_byte(g[5], 0)
@@ -785,6 +796,7 @@ def decode_polling_frame(frame: dict[str, Any]) -> dict[str, Any]:
         "release": (type_and_release >> 4) & 0x0F,
         "outputMask": output_mask,
         "inputMask": input_mask,
+        "dimmerLevel": dimmer_level,
         "temperature": sign * (temp_i + temp_d / 10),
         "powerKw": to_byte(g[7], 0) / 10,
         "setpoint": to_byte(g[8], 0),
@@ -832,6 +844,24 @@ def parse_thermostat_mode(value: str) -> str:
     if v in {"summer", "estate", "cool"}:
         return "summer"
     raise ValueError("mode non valido: usa winter/summer")
+
+
+def parse_dimmer_level(value: str) -> int:
+    if not value.strip():
+        raise ValueError("level non valido: usa 0..9")
+    number = to_number(value, float("nan"))
+    if not math.isfinite(number):
+        raise ValueError("level non valido: usa 0..9")
+    return clamp_int(number, DIMMER_MIN_LEVEL, DIMMER_MAX_LEVEL)
+
+
+def parse_dimmer_action(value: str) -> str:
+    action = normalize_text(value, "").lower()
+    if action in {"on", "off", "toggle"}:
+        return action
+    if action:
+        raise ValueError("action non valida: usa on/off/toggle")
+    return ""
 
 
 def infer_light_state(channel: int, poll: dict[str, Any] | None, fallback: Any, action: str | None) -> bool | None:
@@ -883,12 +913,14 @@ def build_status(refresh: bool) -> dict[str, Any]:
     boards_out = []
     rooms_map: dict[str, dict[str, Any]] = {}
     new_light_state: dict[str, dict[str, Any]] = {}
+    new_dimmer_state: dict[str, dict[str, Any]] = {}
 
     def room_bucket(name: str) -> dict[str, Any]:
         key = normalize_text(name, "Senza stanza")
         if key not in rooms_map:
             rooms_map[key] = {
                 "name": key,
+                "dimmers": [],
                 "lights": [],
                 "shutters": [],
                 "thermostats": [],
@@ -908,7 +940,8 @@ def build_status(refresh: bool) -> dict[str, Any]:
         }
 
         for channel in board.get("channels", []):
-            ch = clamp_int(to_number(channel.get("channel"), 1), 1, 8)
+            max_channel = MAX_CHANNEL_BY_KIND.get(board.get("kind"), 8)
+            ch = clamp_int(to_number(channel.get("channel"), 1), 1, max_channel)
             ch_name = normalize_text(channel.get("name"), default_channel_name(board.get("kind"), ch))
             ch_room = normalize_text(channel.get("room"), "Senza stanza")
             item_id = entity_id(str(board.get("id")), ch)
@@ -936,6 +969,60 @@ def build_status(refresh: bool) -> dict[str, Any]:
                         "boardName": board.get("name"),
                         "address": address,
                         "channel": ch,
+                        "isOn": is_on,
+                    }
+                )
+
+            elif board.get("kind") == "dimmer":
+                prev = snapshot.get("dimmers", {}).get(item_id, {})
+                prev_level = clamp_int(
+                    to_number(prev.get("level") if isinstance(prev, dict) else 0, 0),
+                    DIMMER_MIN_LEVEL,
+                    DIMMER_MAX_LEVEL,
+                )
+                poll_level: int | None = None
+                if isinstance(poll, dict):
+                    poll_level = clamp_int(
+                        to_number(poll.get("dimmerLevel"), prev_level),
+                        DIMMER_MIN_LEVEL,
+                        DIMMER_MAX_LEVEL,
+                    )
+                level = poll_level if poll_level is not None else prev_level
+                is_on = level > 0
+                last_on = clamp_int(
+                    to_number(prev.get("lastOnLevel") if isinstance(prev, dict) else DIMMER_MAX_LEVEL, DIMMER_MAX_LEVEL),
+                    1,
+                    DIMMER_MAX_LEVEL,
+                )
+                if is_on:
+                    last_on = level
+
+                payload_board["channels"].append(
+                    {
+                        "id": item_id,
+                        "channel": ch,
+                        "name": ch_name,
+                        "room": ch_room,
+                        "level": level,
+                        "isOn": is_on,
+                    }
+                )
+                new_dimmer_state[item_id] = {
+                    "level": level,
+                    "isOn": is_on,
+                    "lastOnLevel": last_on,
+                    "updatedAt": now,
+                }
+                room_bucket(ch_room)["dimmers"].append(
+                    {
+                        "id": item_id,
+                        "name": ch_name,
+                        "room": ch_room,
+                        "boardId": board.get("id"),
+                        "boardName": board.get("name"),
+                        "address": address,
+                        "channel": ch,
+                        "level": level,
                         "isOn": is_on,
                     }
                 )
@@ -1012,6 +1099,9 @@ def build_status(refresh: bool) -> dict[str, Any]:
         lights = state.setdefault("lights", {})
         for key, value in new_light_state.items():
             lights[key] = value
+        dimmers = state.setdefault("dimmers", {})
+        for key, value in new_dimmer_state.items():
+            dimmers[key] = value
         state["updatedAt"] = now
 
     update_state(mutator)
@@ -1068,6 +1158,89 @@ def api_light(query: dict[str, list[str]]) -> dict[str, Any]:
     update_state(mutator)
 
     return {"ok": True, "entity": entity, "action": action, "frame": frame}
+
+
+def api_dimmer(query: dict[str, list[str]]) -> dict[str, Any]:
+    cfg = get_config()
+    entity = find_entity(
+        cfg,
+        "dimmer",
+        query_value(query, "id"),
+        query_value(query, "address"),
+        query_value(query, "channel"),
+    )
+    if entity is None:
+        raise LookupError("Dimmer non trovato")
+
+    level_raw = query_value(query, "level")
+    action = parse_dimmer_action(query_value(query, "action"))
+
+    snapshot = get_state()
+    prev = snapshot.get("dimmers", {}).get(entity["id"], {})
+    prev_level = clamp_int(
+        to_number(prev.get("level") if isinstance(prev, dict) else 0, 0),
+        DIMMER_MIN_LEVEL,
+        DIMMER_MAX_LEVEL,
+    )
+    last_on = clamp_int(
+        to_number(prev.get("lastOnLevel") if isinstance(prev, dict) else DIMMER_MAX_LEVEL, DIMMER_MAX_LEVEL),
+        1,
+        DIMMER_MAX_LEVEL,
+    )
+
+    if level_raw.strip():
+        target_level = parse_dimmer_level(level_raw)
+        resolved_action = "set"
+    else:
+        if not action:
+            raise ValueError("serve almeno un parametro: level o action")
+        if action == "off":
+            target_level = DIMMER_MIN_LEVEL
+        elif action == "on":
+            target_level = last_on if prev_level == 0 else prev_level
+        else:  # toggle
+            target_level = DIMMER_MIN_LEVEL if prev_level > 0 else last_on
+        resolved_action = action
+
+    frame = send_frame(entity["address"], DIMMER_COMMAND, [DIMMER_SET_KEY, target_level])
+
+    poll = None
+    try:
+        poll = poll_board(entity["address"])
+    except Exception:
+        poll = None
+
+    final_level = target_level
+    if isinstance(poll, dict):
+        final_level = clamp_int(
+            to_number(poll.get("dimmerLevel"), target_level),
+            DIMMER_MIN_LEVEL,
+            DIMMER_MAX_LEVEL,
+        )
+
+    now = int(time.time() * 1000)
+    new_last_on = last_on
+    if final_level > 0:
+        new_last_on = final_level
+
+    def mutator(state: dict[str, Any]) -> None:
+        state.setdefault("dimmers", {})[entity["id"]] = {
+            "level": final_level,
+            "isOn": final_level > 0,
+            "lastOnLevel": new_last_on,
+            "updatedAt": now,
+        }
+        state["updatedAt"] = now
+
+    update_state(mutator)
+
+    return {
+        "ok": True,
+        "entity": entity,
+        "action": resolved_action,
+        "level": final_level,
+        "frame": frame,
+    }
 
 
 def api_shutter(query: dict[str, list[str]]) -> dict[str, Any]:
@@ -1380,6 +1553,10 @@ class AlgoHandler(BaseHTTPRequestHandler):
 
                 if path == "/api/cmd/light":
                     self._json(HTTPStatus.OK, api_light(query))
+                    return
+
+                if path == "/api/cmd/dimmer":
+                    self._json(HTTPStatus.OK, api_dimmer(query))
                     return
 
                 if path == "/api/cmd/shutter":
