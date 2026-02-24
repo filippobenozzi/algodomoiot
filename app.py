@@ -53,6 +53,7 @@ DIMMER_COMMAND = 0x5B
 DIMMER_SET_KEY = 0x53
 DIMMER_MIN_LEVEL = 0
 DIMMER_MAX_LEVEL = 9
+THERMOSTAT_PROFILE_INTERVAL_S = 20
 
 ALLOWED_KINDS = {"light", "shutter", "thermostat", "dimmer"}
 MAX_CHANNEL_BY_KIND = {
@@ -90,16 +91,86 @@ CONFIG: dict[str, Any] = {}
 STATE: dict[str, Any] = {}
 
 
+def default_thermostat_profile() -> dict[str, Any]:
+    return {"enabled": False, "entries": []}
+
+
+def normalize_hhmm(value: Any, fallback: str = "00:00") -> str:
+    text = normalize_text(value, fallback)
+    parts = text.split(":", 1)
+    if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
+        return fallback
+    hh = int(parts[0])
+    mm = int(parts[1])
+    if hh < 0 or hh > 23 or mm < 0 or mm > 59:
+        return fallback
+    return f"{hh:02d}:{mm:02d}"
+
+
+def hhmm_to_minute(value: str) -> int:
+    parts = value.split(":", 1)
+    if len(parts) != 2:
+        return 0
+    return clamp_int(to_number(parts[0], 0), 0, 23) * 60 + clamp_int(to_number(parts[1], 0), 0, 59)
+
+
+def normalize_thermostat_profile_entry(entry_any: Any) -> dict[str, Any]:
+    entry = entry_any if isinstance(entry_any, dict) else {}
+    start_at = normalize_hhmm(entry.get("from"), "00:00")
+    end_at = normalize_hhmm(entry.get("to"), "23:59")
+    setpoint = to_float(entry.get("setpoint"), to_float(entry.get("temperature"), 21.0))
+    if not math.isfinite(setpoint):
+        setpoint = 21.0
+    setpoint = max(5.0, min(30.0, round(setpoint * 2.0) / 2.0))
+    mode_raw = normalize_text(entry.get("mode"), "winter").lower()
+    mode = "summer" if mode_raw in {"summer", "estate", "cool"} else "winter"
+    return {"from": start_at, "to": end_at, "setpoint": setpoint, "mode": mode}
+
+
+def normalize_thermostat_profile(profile_any: Any) -> dict[str, Any]:
+    profile = profile_any if isinstance(profile_any, dict) else {}
+    entries = []
+    for item in as_list(profile.get("entries")):
+        entries.append(normalize_thermostat_profile_entry(item))
+        if len(entries) >= 48:
+            break
+    return {"enabled": bool_value(profile.get("enabled")), "entries": entries}
+
+
+def thermostat_profile_target(profile: dict[str, Any], now_minute: int) -> tuple[float, str]:
+    for entry in as_list(profile.get("entries")):
+        if not isinstance(entry, dict):
+            continue
+        start_at = hhmm_to_minute(normalize_hhmm(entry.get("from"), "00:00"))
+        end_at = hhmm_to_minute(normalize_hhmm(entry.get("to"), "23:59"))
+        if start_at == end_at:
+            match = True
+        elif start_at < end_at:
+            match = start_at <= now_minute < end_at
+        else:
+            match = now_minute >= start_at or now_minute < end_at
+        if not match:
+            continue
+        setpoint = to_float(entry.get("setpoint"), 21.0)
+        if not math.isfinite(setpoint):
+            setpoint = 21.0
+        setpoint = max(5.0, min(30.0, round(setpoint * 2.0) / 2.0))
+        mode = normalize_text(entry.get("mode"), "winter").lower()
+        return setpoint, ("summer" if mode == "summer" else "winter")
+    return 5.0, "winter"
+
+
 def make_board(board_id: str, name: str, address: int, kind: str, start: int, end: int) -> dict[str, Any]:
     channels = []
     for channel in range(start, end + 1):
-        channels.append(
-            {
-                "channel": channel,
-                "name": default_channel_name(kind, channel),
-                "room": "Senza stanza",
-            }
-        )
+        channel_item = {
+            "channel": channel,
+            "name": default_channel_name(kind, channel),
+            "room": "Senza stanza",
+        }
+        if kind == "thermostat":
+            channel_item["profile"] = default_thermostat_profile()
+        channels.append(channel_item)
     return {
         "id": board_id,
         "name": name,
@@ -388,6 +459,7 @@ def normalize_board(board_any: Any, index: int) -> dict[str, Any]:
 
     provided_names: dict[int, str] = {}
     provided_rooms: dict[int, str] = {}
+    provided_profiles: dict[int, dict[str, Any]] = {}
     for channel_any in as_list(board.get("channels")):
         entry = channel_any if isinstance(channel_any, dict) else {}
         channel_num = clamp_int(to_number(entry.get("channel"), -1), 1, max_channel)
@@ -395,16 +467,19 @@ def normalize_board(board_any: Any, index: int) -> dict[str, Any]:
             continue
         provided_names[channel_num] = normalize_text(entry.get("name"), default_channel_name(kind, channel_num))
         provided_rooms[channel_num] = normalize_text(entry.get("room"), "Senza stanza")
+        if kind == "thermostat":
+            provided_profiles[channel_num] = normalize_thermostat_profile(entry.get("profile"))
 
     channels = []
     for channel_num in range(start, end + 1):
-        channels.append(
-            {
-                "channel": channel_num,
-                "name": provided_names.get(channel_num, default_channel_name(kind, channel_num)),
-                "room": provided_rooms.get(channel_num, "Senza stanza"),
-            }
-        )
+        channel_item = {
+            "channel": channel_num,
+            "name": provided_names.get(channel_num, default_channel_name(kind, channel_num)),
+            "room": provided_rooms.get(channel_num, "Senza stanza"),
+        }
+        if kind == "thermostat":
+            channel_item["profile"] = provided_profiles.get(channel_num, default_thermostat_profile())
+        channels.append(channel_item)
 
     return {
         "id": board_id,
@@ -1304,6 +1379,59 @@ def build_status(refresh: bool) -> dict[str, Any]:
     }
 
 
+def apply_thermostat_profiles_once() -> None:
+    cfg = get_config()
+    snapshot = get_state()
+    now_local = time.localtime()
+    now_minute = now_local.tm_hour * 60 + now_local.tm_min
+
+    for board in as_list(cfg.get("boards")):
+        if not isinstance(board, dict) or board.get("kind") != "thermostat":
+            continue
+        board_id = normalize_text(board.get("id"), "")
+        if not board_id:
+            continue
+        for channel in as_list(board.get("channels")):
+            if not isinstance(channel, dict):
+                continue
+            ch = clamp_int(to_number(channel.get("channel"), -1), 1, MAX_CHANNEL_BY_KIND["thermostat"])
+            if ch < 1:
+                continue
+            profile = normalize_thermostat_profile(channel.get("profile"))
+            if not profile.get("enabled"):
+                continue
+
+            target_setpoint, target_mode = thermostat_profile_target(profile, now_minute)
+            item_id = entity_id(board_id, ch)
+            prev = as_dict(as_dict(snapshot.get("thermostats")).get(item_id))
+            prev_set = prev.get("setpoint")
+            prev_mode = normalize_text(prev.get("mode"), "").lower()
+            need_set = not isinstance(prev_set, (int, float)) or abs(float(prev_set) - target_setpoint) > 0.24
+            need_mode = prev_mode not in {"winter", "summer"} or prev_mode != target_mode
+            if not need_set and not need_mode:
+                continue
+
+            try:
+                api_thermostat(
+                    {
+                        "id": [item_id],
+                        "set": [f"{target_setpoint:.1f}"],
+                        "mode": [target_mode],
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(f"[warn] profilo termostato {item_id} fallito:", exc)
+
+
+def thermostat_profile_loop() -> None:
+    while True:
+        try:
+            apply_thermostat_profiles_once()
+        except Exception as exc:  # noqa: BLE001
+            print("[warn] loop profilo termostati:", exc)
+        time.sleep(THERMOSTAT_PROFILE_INTERVAL_S)
+
+
 def api_light(query: dict[str, list[str]]) -> dict[str, Any]:
     action = query_value(query, "action").strip().lower()
     code = LIGHT_ACTIONS.get(action)
@@ -1877,6 +2005,7 @@ def run() -> None:
     bootstrap()
     host = os.environ.get("HOST", "0.0.0.0")
     port = to_port(os.environ.get("PORT", "80"), 80)
+    threading.Thread(target=thermostat_profile_loop, name="thermostat-profile", daemon=True).start()
     server = ThreadingHTTPServer((host, port), AlgoHandler)
     print(f"AlgoDomo Python in ascolto su http://{host}:{port}")
     server.serve_forever()
