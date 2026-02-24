@@ -94,7 +94,11 @@ class AlgoDomoMqttBridge:
                 raise RuntimeError(f"Modulo paho-mqtt non disponibile: {MQTT_IMPORT_ERROR}")
             self._mqtt = None
             return
-        self._mqtt = mqtt.Client(client_id=self.client_id, protocol=mqtt.MQTTv311)
+        cb_api = getattr(mqtt, "CallbackAPIVersion", None)
+        if cb_api is not None and hasattr(cb_api, "VERSION2"):
+            self._mqtt = mqtt.Client(cb_api.VERSION2, client_id=self.client_id, protocol=mqtt.MQTTv311)
+        else:
+            self._mqtt = mqtt.Client(client_id=self.client_id, protocol=mqtt.MQTTv311)
         if self.username:
             self._mqtt.username_pw_set(self.username, self.password)
         self._mqtt.on_connect = self._on_connect
@@ -394,12 +398,17 @@ class AlgoDomoMqttBridge:
             return
         LOGGER.info("MQTT connesso a %s:%d", self.host, self.port)
         self._publish(f"{self.base_topic}/bridge/status", "online", retain=True)
-        self._mqtt.subscribe(f"{self.base_topic}/poll_all/set", qos=self.qos)
-        self._mqtt.subscribe(f"{self.base_topic}/+/ch+/set", qos=self.qos)
-        self._mqtt.subscribe(f"{self.base_topic}/+/ch+/brightness/set", qos=self.qos)
-        self._mqtt.subscribe(f"{self.base_topic}/+/ch+/setpoint/set", qos=self.qos)
-        self._mqtt.subscribe(f"{self.base_topic}/+/ch+/mode/set", qos=self.qos)
-        self._mqtt.subscribe(f"{self.base_topic}/+/ch+/power/set", qos=self.qos)
+        # MQTT wildcard '+' deve occupare un livello intero (non "ch+").
+        # Pattern validi:
+        #   <base>/<slug>/chN/set
+        #   <base>/<slug>/chN/<cmd>/set
+        subscriptions = [
+            f"{self.base_topic}/poll_all/set",
+            f"{self.base_topic}/+/+/set",
+            f"{self.base_topic}/+/+/+/set",
+        ]
+        for sub in subscriptions:
+            self._mqtt.subscribe(sub, qos=self.qos)
         self._publish_discovery()
         self.publish_status(refresh=True)
 
