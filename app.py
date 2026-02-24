@@ -877,13 +877,12 @@ def infer_light_state(channel: int, poll: dict[str, Any] | None, fallback: Any, 
     return fallback if isinstance(fallback, bool) else None
 
 
-def infer_thermostat_power(poll: dict[str, Any] | None, fallback: Any) -> bool:
-    # Da protocollo polling esteso 0x40: G9 = set temperatura interi.
-    # In questa integrazione 0 indica termostato spento, >0 acceso.
+def infer_thermostat_active(channel: int, poll: dict[str, Any] | None, fallback: Any) -> bool:
+    # Da protocollo polling esteso 0x40: G2 = stato uscite a bit.
+    # Per il termostato consideriamo "attivo" quando il bit uscita del canale e' ON.
     if isinstance(poll, dict):
-        raw = to_number(poll.get("setpoint"), float("nan"))
-        if math.isfinite(raw):
-            return clamp_int(raw, 0, 99) > 0
+        bit = 1 << (channel - 1)
+        return (to_byte(poll.get("outputMask"), 0) & bit) != 0
     return fallback if isinstance(fallback, bool) else True
 
 
@@ -1076,14 +1075,22 @@ def build_status(refresh: bool) -> dict[str, Any]:
                 mode = prev.get("mode") if isinstance(prev, dict) else None
                 if mode not in {"winter", "summer"}:
                     mode = "winter"
+                is_on = prev.get("isOn") if isinstance(prev, dict) else None
+                if not isinstance(is_on, bool):
+                    is_on = True
                 poll_setpoint: int | None = None
                 if isinstance(poll, dict):
                     raw_sp = to_number(poll.get("setpoint"), float("nan"))
                     if math.isfinite(raw_sp):
                         poll_setpoint = clamp_int(raw_sp, 0, 99)
-                is_on = infer_thermostat_power(poll if isinstance(poll, dict) else None, prev.get("isOn") if isinstance(prev, dict) else None)
                 if poll_setpoint is not None:
                     setpoint = float(poll_setpoint)
+                    is_on = poll_setpoint > 0
+                is_active = infer_thermostat_active(
+                    ch,
+                    poll if isinstance(poll, dict) else None,
+                    prev.get("isActive") if isinstance(prev, dict) else None,
+                )
                 payload_board["channels"].append(
                     {
                         "id": item_id,
@@ -1094,6 +1101,7 @@ def build_status(refresh: bool) -> dict[str, Any]:
                         "setpoint": setpoint,
                         "mode": mode,
                         "isOn": is_on,
+                        "isActive": is_active,
                         "boardSetpoint": poll_setpoint,
                     }
                 )
@@ -1101,6 +1109,7 @@ def build_status(refresh: bool) -> dict[str, Any]:
                     "setpoint": setpoint,
                     "mode": mode,
                     "isOn": is_on,
+                    "isActive": is_active,
                     "updatedAt": now,
                 }
                 room_bucket(ch_room)["thermostats"].append(
@@ -1116,6 +1125,7 @@ def build_status(refresh: bool) -> dict[str, Any]:
                         "setpoint": setpoint,
                         "mode": mode,
                         "isOn": is_on,
+                        "isActive": is_active,
                         "boardSetpoint": poll_setpoint,
                     }
                 )
@@ -1381,10 +1391,14 @@ def api_thermostat(query: dict[str, list[str]]) -> dict[str, Any]:
     now = int(time.time() * 1000)
 
     def mutator(state: dict[str, Any]) -> None:
+        prev_active = prev.get("isActive") if isinstance(prev, dict) else None
+        if not isinstance(prev_active, bool):
+            prev_active = next_power
         state.setdefault("thermostats", {})[entity["id"]] = {
             "setpoint": next_setpoint,
             "mode": next_mode,
             "isOn": next_power,
+            "isActive": prev_active,
             "updatedAt": now,
         }
         state["updatedAt"] = now
