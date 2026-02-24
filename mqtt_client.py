@@ -167,6 +167,11 @@ class AlgoDomoMqttBridge:
         with self._lock:
             self._boards = boards
             self._boards_by_slug = by_slug
+        if not boards:
+            LOGGER.warning("Nessuna scheda trovata in /api/config: discovery MQTT vuoto")
+        else:
+            summary = ", ".join(f"{b['id']}:{b['kind']}({len(b['channels'])}ch)" for b in boards)
+            LOGGER.info("Schede MQTT caricate: %s", summary)
 
     def _topic_prefix(self, board: dict[str, Any]) -> str:
         return f"{self.base_topic}/{board['slug']}"
@@ -180,7 +185,10 @@ class AlgoDomoMqttBridge:
         else:
             raw = str(payload)
         hold = self.retain if retain is None else retain
-        self._mqtt.publish(topic, raw, qos=self.qos, retain=hold)
+        info = self._mqtt.publish(topic, raw, qos=self.qos, retain=hold)
+        rc = as_int(getattr(info, "rc", 0), 0)
+        if mqtt is not None and rc != mqtt.MQTT_ERR_SUCCESS:
+            LOGGER.warning("Publish fallita topic=%s rc=%s", topic, rc)
 
     def _device_payload(self, board: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -193,6 +201,7 @@ class AlgoDomoMqttBridge:
     def _publish_discovery(self) -> None:
         with self._lock:
             boards = list(self._boards)
+        count = 0
         for board in boards:
             device = self._device_payload(board)
             availability = self._availability_topic(board)
@@ -215,6 +224,7 @@ class AlgoDomoMqttBridge:
                         },
                         retain=True,
                     )
+                    count += 1
                 elif board["kind"] == "shutter":
                     self._publish(
                         f"{self.discovery_prefix}/cover/{suffix}/config",
@@ -235,6 +245,7 @@ class AlgoDomoMqttBridge:
                         },
                         retain=True,
                     )
+                    count += 1
                 elif board["kind"] == "dimmer":
                     self._publish(
                         f"{self.discovery_prefix}/light/{suffix}/config",
@@ -252,6 +263,7 @@ class AlgoDomoMqttBridge:
                         },
                         retain=True,
                     )
+                    count += 1
                 else:
                     self._publish(
                         f"{self.discovery_prefix}/sensor/{suffix}_temperature/config",
@@ -265,6 +277,7 @@ class AlgoDomoMqttBridge:
                         },
                         retain=True,
                     )
+                    count += 1
                     self._publish(
                         f"{self.discovery_prefix}/number/{suffix}_setpoint/config",
                         {
@@ -281,6 +294,7 @@ class AlgoDomoMqttBridge:
                         },
                         retain=True,
                     )
+                    count += 1
                     self._publish(
                         f"{self.discovery_prefix}/select/{suffix}_mode/config",
                         {
@@ -294,6 +308,7 @@ class AlgoDomoMqttBridge:
                         },
                         retain=True,
                     )
+                    count += 1
                     self._publish(
                         f"{self.discovery_prefix}/switch/{suffix}_power/config",
                         {
@@ -308,6 +323,7 @@ class AlgoDomoMqttBridge:
                         },
                         retain=True,
                     )
+                    count += 1
                     self._publish(
                         f"{self.discovery_prefix}/binary_sensor/{suffix}_active/config",
                         {
@@ -321,6 +337,8 @@ class AlgoDomoMqttBridge:
                         },
                         retain=True,
                     )
+                    count += 1
+        LOGGER.info("Discovery MQTT pubblicato: %d entita", count)
 
     def _publish_board_states(self, board_state: dict[str, Any], failed_addresses: set[int]) -> None:
         board_id = str(board_state.get("id", "")).strip()
