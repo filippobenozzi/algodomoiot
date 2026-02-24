@@ -60,6 +60,21 @@ def as_int(value: Any, fallback: int = 0) -> int:
         return fallback
 
 
+def as_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
 def clamp(value: int, min_value: int, max_value: int) -> int:
     if value < min_value:
         return min_value
@@ -104,7 +119,7 @@ class AlgoDomoMqttBridge:
         self._mqtt.on_connect = self._on_connect
         self._mqtt.on_disconnect = self._on_disconnect
         self._mqtt.on_message = self._on_message
-        self._mqtt.will_set(f"{self.base_topic}/bridge/status", "offline", qos=self.qos, retain=True)
+        self._mqtt.will_set(self._bridge_status_topic(), "offline", qos=self.qos, retain=True)
 
     def _http_json(self, path: str, timeout: int = 10) -> dict[str, Any]:
         req = Request(f"{self.http_base}{path}", headers={"Accept": "application/json"})  # noqa: S310
@@ -126,8 +141,15 @@ class AlgoDomoMqttBridge:
             boards_raw = []
         boards: list[dict[str, Any]] = []
         by_slug: dict[str, dict[str, Any]] = {}
+        disabled_count = 0
         for raw in boards_raw:
             if not isinstance(raw, dict):
+                continue
+            publish_enabled = raw.get("mqttPublish")
+            if publish_enabled is None and "publish_enabled" in raw:
+                publish_enabled = raw.get("publish_enabled")
+            if not as_bool(publish_enabled, True):
+                disabled_count += 1
                 continue
             board_id = str(raw.get("id", "")).strip()
             board_name = str(raw.get("name") or board_id or "Scheda").strip()
@@ -172,12 +194,17 @@ class AlgoDomoMqttBridge:
         else:
             summary = ", ".join(f"{b['id']}:{b['kind']}({len(b['channels'])}ch)" for b in boards)
             LOGGER.info("Schede MQTT caricate: %s", summary)
+        if disabled_count > 0:
+            LOGGER.info("Schede escluse da MQTT (mqttPublish=0): %d", disabled_count)
 
     def _topic_prefix(self, board: dict[str, Any]) -> str:
         return f"{self.base_topic}/{board['slug']}"
 
     def _availability_topic(self, board: dict[str, Any]) -> str:
         return f"{self._topic_prefix(board)}/availability"
+
+    def _bridge_status_topic(self) -> str:
+        return f"{self.base_topic}/bridge/status"
 
     def _publish(self, topic: str, payload: Any, retain: bool | None = None) -> None:
         if isinstance(payload, dict):
@@ -198,6 +225,14 @@ class AlgoDomoMqttBridge:
             "model": f"board-{board['kind']}",
         }
 
+    def _bridge_device_payload(self) -> dict[str, Any]:
+        return {
+            "identifiers": ["algodomoiot_mqtt_bridge"],
+            "name": "AlgoDomo MQTT",
+            "manufacturer": "AlgoDomo",
+            "model": "mqtt-bridge",
+        }
+
     def _publish_discovery(self) -> None:
         with self._lock:
             boards = list(self._boards)
@@ -206,6 +241,20 @@ class AlgoDomoMqttBridge:
             device = self._device_payload(board)
             availability = self._availability_topic(board)
             topic_prefix = self._topic_prefix(board)
+            poll_suffix = f"algodomoiot_{board['slug']}_poll"
+            self._publish(
+                f"{self.discovery_prefix}/button/{poll_suffix}/config",
+                {
+                    "name": f"{board['name']} Poll",
+                    "unique_id": poll_suffix,
+                    "command_topic": f"{topic_prefix}/poll/set",
+                    "payload_press": "POLL",
+                    "availability_topic": availability,
+                    "device": device,
+                },
+                retain=True,
+            )
+            count += 1
             for channel in board["channels"]:
                 suffix = f"algodomoiot_{board['slug']}_ch{channel}"
                 name = f"{board['name']} CH{channel}"
@@ -265,79 +314,60 @@ class AlgoDomoMqttBridge:
                     )
                     count += 1
                 else:
-                    self._publish(
+                    legacy_topics = [
                         f"{self.discovery_prefix}/sensor/{suffix}_temperature/config",
-                        {
-                            "name": f"{name} Temp",
-                            "unique_id": f"{suffix}_temperature",
-                            "state_topic": f"{topic_prefix}/ch{channel}/temperature/state",
-                            "unit_of_measurement": "C",
-                            "availability_topic": availability,
-                            "device": device,
-                        },
-                        retain=True,
-                    )
-                    count += 1
-                    self._publish(
                         f"{self.discovery_prefix}/number/{suffix}_setpoint/config",
-                        {
-                            "name": f"{name} Set",
-                            "unique_id": f"{suffix}_setpoint",
-                            "command_topic": f"{topic_prefix}/ch{channel}/setpoint/set",
-                            "state_topic": f"{topic_prefix}/ch{channel}/setpoint/state",
-                            "min": 5,
-                            "max": 30,
-                            "step": 0.5,
-                            "mode": "box",
-                            "availability_topic": availability,
-                            "device": device,
-                        },
-                        retain=True,
-                    )
-                    count += 1
-                    self._publish(
                         f"{self.discovery_prefix}/select/{suffix}_mode/config",
-                        {
-                            "name": f"{name} Mode",
-                            "unique_id": f"{suffix}_mode",
-                            "command_topic": f"{topic_prefix}/ch{channel}/mode/set",
-                            "state_topic": f"{topic_prefix}/ch{channel}/mode/state",
-                            "options": ["WINTER", "SUMMER"],
-                            "availability_topic": availability,
-                            "device": device,
-                        },
-                        retain=True,
-                    )
-                    count += 1
-                    self._publish(
                         f"{self.discovery_prefix}/switch/{suffix}_power/config",
-                        {
-                            "name": f"{name} Power",
-                            "unique_id": f"{suffix}_power",
-                            "command_topic": f"{topic_prefix}/ch{channel}/power/set",
-                            "state_topic": f"{topic_prefix}/ch{channel}/power/state",
-                            "payload_on": "ON",
-                            "payload_off": "OFF",
-                            "availability_topic": availability,
-                            "device": device,
-                        },
-                        retain=True,
-                    )
-                    count += 1
-                    self._publish(
                         f"{self.discovery_prefix}/binary_sensor/{suffix}_active/config",
+                    ]
+                    for old_topic in legacy_topics:
+                        self._publish(old_topic, "", retain=True)
+                    self._publish(
+                        f"{self.discovery_prefix}/climate/{suffix}/config",
                         {
-                            "name": f"{name} Active",
-                            "unique_id": f"{suffix}_active",
-                            "state_topic": f"{topic_prefix}/ch{channel}/active/state",
-                            "payload_on": "ON",
-                            "payload_off": "OFF",
+                            "name": name,
+                            "unique_id": suffix,
+                            "mode_command_topic": f"{topic_prefix}/ch{channel}/mode/set",
+                            "mode_state_topic": f"{topic_prefix}/ch{channel}/mode/state",
+                            "temperature_command_topic": f"{topic_prefix}/ch{channel}/temperature/set",
+                            "temperature_state_topic": f"{topic_prefix}/ch{channel}/setpoint/state",
+                            "current_temperature_topic": f"{topic_prefix}/ch{channel}/temperature/state",
+                            "action_topic": f"{topic_prefix}/ch{channel}/action/state",
+                            "modes": ["off", "heat", "cool"],
+                            "min_temp": 5,
+                            "max_temp": 30,
+                            "temp_step": 0.5,
+                            "temperature_unit": "C",
+                            "precision": 0.5,
                             "availability_topic": availability,
                             "device": device,
                         },
                         retain=True,
                     )
                     count += 1
+        bridge_device = self._bridge_device_payload()
+        bridge_availability = self._bridge_status_topic()
+        bridge_buttons = [
+            ("poll_all", "Poll tutte le schede", f"{self.base_topic}/poll_all/set", "POLL"),
+            ("restart_mqtt", "Riavvia servizio MQTT", f"{self.base_topic}/service/restart/mqtt/set", "RESTART"),
+            ("restart_all", "Riavvia tutti i servizi", f"{self.base_topic}/service/restart/all/set", "RESTART"),
+        ]
+        for suffix, name, command_topic, payload_press in bridge_buttons:
+            unique_id = f"algodomoiot_mqtt_{suffix}"
+            self._publish(
+                f"{self.discovery_prefix}/button/{unique_id}/config",
+                {
+                    "name": name,
+                    "unique_id": unique_id,
+                    "command_topic": command_topic,
+                    "payload_press": payload_press,
+                    "availability_topic": bridge_availability,
+                    "device": bridge_device,
+                },
+                retain=True,
+            )
+            count += 1
         LOGGER.info("Discovery MQTT pubblicato: %d entita", count)
 
     def _publish_board_states(self, board_state: dict[str, Any], failed_addresses: set[int]) -> None:
@@ -379,11 +409,20 @@ class AlgoDomoMqttBridge:
                 mode = str(channel.get("mode", "winter")).upper()
                 is_on = bool(channel.get("isOn"))
                 is_active = bool(channel.get("isActive")) if channel.get("isActive") is not None else is_on
+                is_summer = mode == "SUMMER"
+                hvac_mode = "off" if not is_on else ("cool" if is_summer else "heat")
+                if not is_on:
+                    hvac_action = "off"
+                elif is_active:
+                    hvac_action = "cooling" if is_summer else "heating"
+                else:
+                    hvac_action = "idle"
                 if isinstance(temp, (int, float)):
                     self._publish(f"{topic_prefix}/ch{ch}/temperature/state", round(float(temp), 1), retain=True)
                 if isinstance(setpoint, (int, float)):
                     self._publish(f"{topic_prefix}/ch{ch}/setpoint/state", round(float(setpoint), 1), retain=True)
-                self._publish(f"{topic_prefix}/ch{ch}/mode/state", "SUMMER" if mode == "SUMMER" else "WINTER", retain=True)
+                self._publish(f"{topic_prefix}/ch{ch}/mode/state", hvac_mode, retain=True)
+                self._publish(f"{topic_prefix}/ch{ch}/action/state", hvac_action, retain=True)
                 self._publish(f"{topic_prefix}/ch{ch}/power/state", "ON" if is_on else "OFF", retain=True)
                 self._publish(f"{topic_prefix}/ch{ch}/active/state", "ON" if is_active else "OFF", retain=True)
 
@@ -415,11 +454,13 @@ class AlgoDomoMqttBridge:
             LOGGER.error("Connessione MQTT fallita: rc=%s", rc)
             return
         LOGGER.info("MQTT connesso a %s:%d", self.host, self.port)
-        self._publish(f"{self.base_topic}/bridge/status", "online", retain=True)
+        self._publish(self._bridge_status_topic(), "online", retain=True)
         # MQTT wildcard '+' deve occupare un livello intero (non "ch+").
         # Pattern validi:
+        #   <base>/<slug>/poll/set
         #   <base>/<slug>/chN/set
         #   <base>/<slug>/chN/<cmd>/set
+        #   <base>/service/restart/<name>/set
         subscriptions = [
             f"{self.base_topic}/poll_all/set",
             f"{self.base_topic}/+/+/set",
@@ -470,12 +511,15 @@ class AlgoDomoMqttBridge:
                     self._api_get("/api/cmd/dimmer", {"id": entity_id, "level": clamp(value, 0, 9)})
             return
         if board["kind"] == "thermostat":
-            if tail == "setpoint/set":
+            if tail in {"setpoint/set", "temperature/set"}:
                 self._api_get("/api/cmd/thermostat", {"id": entity_id, "set": payload.strip()})
                 return
             if tail == "mode/set":
+                if text in {"OFF", "0", "FALSE", "SPENTO"}:
+                    self._api_get("/api/cmd/thermostat", {"id": entity_id, "power": "off"})
+                    return
                 mode = "summer" if text in {"SUMMER", "COOL", "ESTATE"} else "winter"
-                self._api_get("/api/cmd/thermostat", {"id": entity_id, "mode": mode})
+                self._api_get("/api/cmd/thermostat", {"id": entity_id, "mode": mode, "power": "on"})
                 return
             if tail == "power/set":
                 power = "on" if text in {"ON", "1", "TRUE"} else "off"
@@ -484,24 +528,47 @@ class AlgoDomoMqttBridge:
     def _on_message(self, client, userdata, msg):  # noqa: ANN001
         topic = str(getattr(msg, "topic", "") or "")
         payload = (getattr(msg, "payload", b"") or b"").decode("utf-8", errors="ignore").strip()
-        if topic == f"{self.base_topic}/poll_all/set":
-            self.publish_status(refresh=True)
-            return
-        prefix = f"{self.base_topic}/"
-        if not topic.startswith(prefix):
-            return
-        tail = topic[len(prefix) :]
-        match = re.match(r"^([^/]+)/ch([0-9]+)/(set|brightness/set|setpoint/set|mode/set|power/set)$", tail)
-        if not match:
-            return
-        slug = match.group(1)
-        channel = as_int(match.group(2), -1)
-        cmd_tail = match.group(3)
-        with self._lock:
-            board = self._boards_by_slug.get(slug)
-        if board is None or channel < 1:
-            return
         try:
+            if topic == f"{self.base_topic}/poll_all/set":
+                self.publish_status(refresh=True)
+                return
+            if topic == f"{self.base_topic}/service/restart/mqtt/set":
+                self._api_get("/api/admin/restart", {"service": "mqtt"})
+                return
+            if topic == f"{self.base_topic}/service/restart/all/set":
+                self._api_get("/api/admin/restart", {"service": "all"})
+                return
+
+            prefix = f"{self.base_topic}/"
+            if not topic.startswith(prefix):
+                return
+
+            tail = topic[len(prefix) :]
+            poll_match = re.match(r"^([^/]+)/poll/set$", tail)
+            if poll_match:
+                slug = poll_match.group(1)
+                with self._lock:
+                    board = self._boards_by_slug.get(slug)
+                if board is None:
+                    return
+                self._api_get("/api/cmd/poll", {"address": board["address"]})
+                self.publish_status(refresh=False)
+                return
+
+            match = re.match(
+                r"^([^/]+)/ch([0-9]+)/(set|brightness/set|setpoint/set|temperature/set|mode/set|power/set)$",
+                tail,
+            )
+            if not match:
+                return
+            slug = match.group(1)
+            channel = as_int(match.group(2), -1)
+            cmd_tail = match.group(3)
+            with self._lock:
+                board = self._boards_by_slug.get(slug)
+            if board is None or channel < 1:
+                return
+
             self._send_command(board, channel, cmd_tail, payload)
             self.publish_status(refresh=False)
         except Exception as exc:

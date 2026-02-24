@@ -1618,8 +1618,11 @@ def api_admin_restart(query: dict[str, list[str]]) -> dict[str, Any]:
             raise ValueError("mqtt non configurato: abilita MQTT e compila host/base topic/token in /config")
         action = "restart-mqtt"
         label = "algodomoiot-mqtt.service"
+    elif service in {"all", "tutti", "stack"}:
+        action = "restart-all"
+        label = "algodomoiot.service,newt.service,algodomoiot-mqtt.service"
     else:
-        raise ValueError("service non valido: usa app, newt o mqtt")
+        raise ValueError("service non valido: usa app, newt, mqtt o all")
 
     run_admin_action(action)
     return {
