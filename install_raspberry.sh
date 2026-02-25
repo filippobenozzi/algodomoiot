@@ -56,6 +56,11 @@ if ! command -v i2cdetect >/dev/null 2>&1; then
   apt-get install -y i2c-tools
 fi
 
+if ! command -v hwclock >/dev/null 2>&1 && [[ ! -x /usr/sbin/hwclock && ! -x /sbin/hwclock ]]; then
+  apt-get update
+  apt-get install -y util-linux
+fi
+
 if ! python3 -c "import paho.mqtt.client" >/dev/null 2>&1; then
   apt-get update
   apt-get install -y python3-paho-mqtt

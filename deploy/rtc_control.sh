@@ -82,8 +82,23 @@ disable_fake_hwclock() {
   command -v update-rc.d >/dev/null 2>&1 && update-rc.d -f fake-hwclock remove >/dev/null 2>&1 || true
 }
 
+hwclock_cmd() {
+  if command -v hwclock >/dev/null 2>&1; then
+    command -v hwclock
+    return 0
+  fi
+  local cand
+  for cand in /usr/sbin/hwclock /sbin/hwclock /usr/bin/hwclock /bin/hwclock; do
+    if [[ -x "${cand}" ]]; then
+      printf '%s\n' "${cand}"
+      return 0
+    fi
+  done
+  return 1
+}
+
 apply_rtc() {
-  local enabled model bus addr cfg tmp changed overlay_line current updated
+  local enabled model bus addr cfg tmp changed overlay_line current updated hwc
   enabled="${1:-0}"
   model="$(normalize_model "${2:-ds3231}")"
   bus="$(normalize_bus "${3:-1}")"
@@ -118,8 +133,12 @@ apply_rtc() {
 
   if [[ "${enabled}" == "1" ]]; then
     disable_fake_hwclock
-    hwclock -r >/dev/null 2>&1 || true
-    hwclock -s >/dev/null 2>&1 || true
+    if hwc="$(hwclock_cmd)"; then
+      "${hwc}" -r >/dev/null 2>&1 || true
+      "${hwc}" -s >/dev/null 2>&1 || true
+    else
+      echo "Warning: hwclock non disponibile, sincronizzazione ora saltata"
+    fi
     echo "RTC configurato: model=${model} bus=${bus} addr=${addr}"
   else
     echo "RTC disabilitato (overlay i2c-rtc rimosso)"
@@ -131,17 +150,17 @@ apply_rtc() {
 }
 
 sync_rtc() {
-  local mode="${1:-from-rtc}"
-  if ! command -v hwclock >/dev/null 2>&1; then
+  local mode="${1:-from-rtc}" hwc
+  if ! hwc="$(hwclock_cmd)"; then
     die "Comando hwclock non disponibile"
   fi
   case "${mode}" in
     from-rtc)
-      hwclock -s
+      "${hwc}" -s
       echo "Ora sistema sincronizzata da RTC"
       ;;
     to-rtc)
-      hwclock -w
+      "${hwc}" -w
       echo "RTC sincronizzato da ora sistema"
       ;;
     *)

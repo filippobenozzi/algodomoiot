@@ -9,6 +9,7 @@ import json
 import math
 import os
 import select
+import shutil
 import socket
 import subprocess
 import termios
@@ -944,6 +945,19 @@ def boot_config_path() -> Path | None:
     return None
 
 
+def hwclock_binary() -> str:
+    candidates = ["hwclock", "/usr/sbin/hwclock", "/sbin/hwclock", "/usr/bin/hwclock", "/bin/hwclock"]
+    for candidate in candidates:
+        if candidate.startswith("/"):
+            if Path(candidate).exists():
+                return candidate
+        else:
+            found = shutil.which(candidate)
+            if found:
+                return found
+    return ""
+
+
 def rtc_system_status() -> dict[str, Any]:
     rtc_cfg = rtc_runtime_payload(get_config())
     cfg_path = boot_config_path()
@@ -979,7 +993,11 @@ def rtc_system_status() -> dict[str, Any]:
             pass
 
     bus = int(rtc_cfg["bus"])
-    hwclock = run_cmd(["hwclock", "-r"], timeout_s=6)
+    hwclock_cmd = hwclock_binary()
+    if hwclock_cmd:
+        hwclock = run_cmd([hwclock_cmd, "-r"], timeout_s=6)
+    else:
+        hwclock = {"ok": False, "stdout": "", "stderr": "Comando hwclock non disponibile"}
     return {
         "enabled": bool(rtc_cfg["enabled"]),
         "configModel": rtc_cfg["model"],
@@ -992,6 +1010,7 @@ def rtc_system_status() -> dict[str, Any]:
         "overlayAddress": overlay_address,
         "i2cDevicePresent": Path(f"/dev/i2c-{bus}").exists(),
         "rtcDevicePresent": Path("/dev/rtc0").exists() or Path("/dev/rtc1").exists(),
+        "hwclockPath": hwclock_cmd,
         "hwclockOk": bool(hwclock["ok"]),
         "hwclockTime": normalize_text(hwclock["stdout"], ""),
         "error": normalize_text(hwclock["stderr"] or hwclock["stdout"], "") if not hwclock["ok"] else "",
