@@ -8,6 +8,7 @@ Applicazione Python leggera con:
 - invio comandi via seriale (`/dev/ttyS0` di default, 9600 8N1)
 - integrazione `newt` (configurabile da UI + service systemd)
 - client MQTT verso Home Assistant (configurabile da UI + service systemd)
+- integrazione RTC I2C per l'ora di sistema (configurabile da UI)
 - gestione rete Raspberry (wifi/ethernet da UI)
 
 Tutti i dati vengono salvati in JSON locale.
@@ -23,6 +24,7 @@ Da `/config` ora puoi programmare tutto senza editare JSON manualmente:
 - nome e stanza di ogni canale
 - parametri `newt` (`enabled`, `id`, `secret`, `endpoint`)
 - parametri `mqtt` (`enabled`, broker, topic, discovery, polling, auth)
+- parametri `rtc` (`enabled`, `model`, `bus`, `address`)
 - rete Raspberry (`mode` ethernet/wifi + credenziali wifi)
 - pulsanti di manutenzione: restart servizio, restart newt, restart mqtt, applica rete
 
@@ -94,6 +96,8 @@ Server default: `http://localhost`
 - Admin:
   - `GET /api/admin/restart?token=...&service=app|newt|mqtt`
   - `GET /api/admin/apply-network?token=...`
+  - `GET /api/admin/apply-rtc?token=...`
+  - `GET /api/admin/sync-rtc?token=...&mode=from-rtc|to-rtc`
 
 ## Installazione Raspberry Pi + systemd
 
@@ -121,6 +125,7 @@ L'installer:
 - abilita/avvia `sheltr.service`
 - installa/abilita `newt.service` (avvio effettivo quando `NEWT_ENABLED=1` e credenziali presenti)
 - installa/abilita `sheltr-mqtt.service` (avvio effettivo quando `MQTT_ENABLED=1` e parametri validi)
+- installa strumenti I2C (`i2c-tools`) e script amministrativo RTC
 - aggiunge utente servizio al gruppo `dialout` (se presente)
 - disabilita e mette in `mask` `serial-getty@ttyS0.service` e `serial-getty@serial0.service`
 - rimuove la console seriale da `cmdline.txt` (con backup automatico)

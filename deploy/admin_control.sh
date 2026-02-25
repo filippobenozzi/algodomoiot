@@ -40,6 +40,17 @@ case "${ACTION}" in
     IP_GATEWAY="${8:-}"
     /usr/local/lib/sheltr-admin/apply_network.sh "${MODE}" "${SSID}" "${PASS}" "${IP_MODE}" "${IP_ADDR}" "${IP_PREFIX}" "${IP_GATEWAY}"
     ;;
+  apply-rtc)
+    ENABLED="${2:-0}"
+    MODEL="${3:-ds3231}"
+    BUS="${4:-1}"
+    ADDRESS="${5:-0x68}"
+    /usr/local/lib/sheltr-admin/rtc_control.sh apply "${ENABLED}" "${MODEL}" "${BUS}" "${ADDRESS}"
+    ;;
+  sync-rtc)
+    MODE="${2:-from-rtc}"
+    /usr/local/lib/sheltr-admin/rtc_control.sh sync "${MODE}"
+    ;;
   *)
     echo "Azione non valida" >&2
     exit 1

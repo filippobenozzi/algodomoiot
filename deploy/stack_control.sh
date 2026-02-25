@@ -41,6 +41,7 @@ ensure_deploy_files() {
     "admin_control.sh"
     "apply_network.sh"
     "newt_watchdog.sh"
+    "rtc_control.sh"
     "mqtt.env"
   )
   local item
@@ -71,7 +72,8 @@ install_runtime_files() {
   install -m 750 "${DEPLOY_DIR}/admin_control.sh" "${ADMIN_DIR}/admin_control.sh"
   install -m 750 "${DEPLOY_DIR}/apply_network.sh" "${ADMIN_DIR}/apply_network.sh"
   install -m 750 "${DEPLOY_DIR}/newt_watchdog.sh" "${ADMIN_DIR}/newt_watchdog.sh"
-  chown root:root "${ADMIN_DIR}/admin_control.sh" "${ADMIN_DIR}/apply_network.sh" "${ADMIN_DIR}/newt_watchdog.sh"
+  install -m 750 "${DEPLOY_DIR}/rtc_control.sh" "${ADMIN_DIR}/rtc_control.sh"
+  chown root:root "${ADMIN_DIR}/admin_control.sh" "${ADMIN_DIR}/apply_network.sh" "${ADMIN_DIR}/newt_watchdog.sh" "${ADMIN_DIR}/rtc_control.sh"
 }
 
 is_mqtt_configured() {

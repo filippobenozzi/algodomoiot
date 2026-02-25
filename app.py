@@ -100,6 +100,7 @@ MAX_CHANNEL_BY_KIND = {
     "thermostat": 8,
     "dimmer": 1,
 }
+RTC_SUPPORTED_MODELS = {"ds3231", "ds1307", "pcf8523", "pcf8563"}
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
@@ -346,6 +347,22 @@ def default_channel_name(kind: str, channel: int) -> str:
     return f"Termostato {channel}"
 
 
+def normalize_rtc_model(value: Any, fallback: str = "ds3231") -> str:
+    model = normalize_text(value, fallback).lower()
+    return model if model in RTC_SUPPORTED_MODELS else fallback
+
+
+def normalize_rtc_address(value: Any, fallback: str = "0x68") -> str:
+    raw = normalize_text(value, fallback).lower()
+    number = 0x68
+    try:
+        number = int(raw, 0)
+    except Exception:
+        number = 0x68
+    number = clamp_int(float(number), 0x03, 0x77)
+    return f"0x{number:02x}"
+
+
 def default_config() -> dict[str, Any]:
     return {
         "serial": {
@@ -374,6 +391,12 @@ def default_config() -> dict[str, Any]:
             "pollIntervalSec": 30,
             "qos": 0,
             "retain": True,
+        },
+        "rtc": {
+            "enabled": False,
+            "model": "ds3231",
+            "bus": 1,
+            "address": "0x68",
         },
         "network": {
             "mode": "ethernet",
@@ -452,6 +475,7 @@ def bootstrap() -> None:
         sync_newt_runtime_state(cfg)
         sync_mqtt_env(cfg)
         sync_mqtt_runtime_state(cfg)
+        sync_rtc_runtime_state(cfg, cfg)
     except Exception as exc:  # noqa: BLE001
         print("[warn] impossibile inizializzare runtime esterni:", exc)
 
@@ -473,6 +497,7 @@ def set_config(new_config: dict[str, Any]) -> dict[str, Any]:
         sync_newt_runtime_state(normalized, previous)
         sync_mqtt_env(normalized)
         sync_mqtt_runtime_state(normalized, previous)
+        sync_rtc_runtime_state(normalized, previous)
     except Exception as exc:  # noqa: BLE001
         print("[warn] impossibile aggiornare runtime esterni:", exc)
     return copy.deepcopy(normalized)
@@ -658,6 +683,7 @@ def normalize_config(raw: Any) -> dict[str, Any]:
     serial_raw = as_dict(raw.get("serial"))
     newt_raw = as_dict(raw.get("newt"))
     mqtt_raw = as_dict(raw.get("mqtt"))
+    rtc_raw = as_dict(raw.get("rtc"))
     network_raw = as_dict(raw.get("network"))
     ip_raw = as_dict(network_raw.get("ip"))
     wifi_raw = as_dict(network_raw.get("wifi"))
@@ -699,6 +725,12 @@ def normalize_config(raw: Any) -> dict[str, Any]:
             ),
             "qos": clamp_int(to_number(mqtt_raw.get("qos"), defaults["mqtt"]["qos"]), 0, 2),
             "retain": bool_value(mqtt_raw.get("retain")),
+        },
+        "rtc": {
+            "enabled": bool_value(rtc_raw.get("enabled")),
+            "model": normalize_rtc_model(rtc_raw.get("model"), defaults["rtc"]["model"]),
+            "bus": clamp_int(to_number(rtc_raw.get("bus"), defaults["rtc"]["bus"]), 0, 10),
+            "address": normalize_rtc_address(rtc_raw.get("address"), defaults["rtc"]["address"]),
         },
         "network": {
             "mode": "wifi" if normalize_text(network_raw.get("mode"), "ethernet").lower() == "wifi" else "ethernet",
@@ -876,6 +908,96 @@ def sync_mqtt_runtime_state(current_cfg: dict[str, Any], previous_cfg: dict[str,
             print("[warn] impossibile fermare mqtt:", exc)
 
 
+def rtc_runtime_payload(cfg: dict[str, Any]) -> dict[str, Any]:
+    rtc_cfg = as_dict(cfg.get("rtc"))
+    return {
+        "enabled": bool_value(rtc_cfg.get("enabled")),
+        "model": normalize_rtc_model(rtc_cfg.get("model"), "ds3231"),
+        "bus": clamp_int(to_number(rtc_cfg.get("bus"), 1), 0, 10),
+        "address": normalize_rtc_address(rtc_cfg.get("address"), "0x68"),
+    }
+
+
+def sync_rtc_runtime_state(current_cfg: dict[str, Any], previous_cfg: dict[str, Any] | None = None) -> None:
+    if previous_cfg is None:
+        return
+    current = rtc_runtime_payload(current_cfg)
+    previous = rtc_runtime_payload(previous_cfg)
+    if current == previous:
+        return
+    run_admin_action(
+        "apply-rtc",
+        [
+            "1" if current["enabled"] else "0",
+            str(current["model"]),
+            str(current["bus"]),
+            str(current["address"]),
+        ],
+    )
+
+
+def boot_config_path() -> Path | None:
+    for raw_path in ("/boot/firmware/config.txt", "/boot/config.txt"):
+        path = Path(raw_path)
+        if path.exists():
+            return path
+    return None
+
+
+def rtc_system_status() -> dict[str, Any]:
+    rtc_cfg = rtc_runtime_payload(get_config())
+    cfg_path = boot_config_path()
+    i2c_arm = "unknown"
+    overlay = ""
+    overlay_model = ""
+    overlay_address = ""
+
+    if cfg_path is not None:
+        try:
+            for line in cfg_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                base = line.split("#", 1)[0].strip()
+                if not base:
+                    continue
+                if base.startswith("dtparam="):
+                    payload = base[len("dtparam=") :]
+                    for item in payload.split(","):
+                        key, sep, value = item.partition("=")
+                        if key.strip() == "i2c_arm":
+                            i2c_arm = (value.strip().lower() if sep else "on") or "on"
+                if base.startswith("dtoverlay=i2c-rtc"):
+                    overlay = base
+                    if "," in base:
+                        tail = base.split(",", 1)[1]
+                        model = tail.split(",", 1)[0].strip()
+                        if model:
+                            overlay_model = model
+                        for part in tail.split(",")[1:]:
+                            key, _, value = part.partition("=")
+                            if key.strip().lower() == "addr":
+                                overlay_address = value.strip().lower()
+        except Exception:
+            pass
+
+    bus = int(rtc_cfg["bus"])
+    hwclock = run_cmd(["hwclock", "-r"], timeout_s=6)
+    return {
+        "enabled": bool(rtc_cfg["enabled"]),
+        "configModel": rtc_cfg["model"],
+        "configBus": bus,
+        "configAddress": rtc_cfg["address"],
+        "bootConfig": str(cfg_path) if cfg_path is not None else "",
+        "i2cArm": i2c_arm,
+        "overlay": overlay,
+        "overlayModel": overlay_model,
+        "overlayAddress": overlay_address,
+        "i2cDevicePresent": Path(f"/dev/i2c-{bus}").exists(),
+        "rtcDevicePresent": Path("/dev/rtc0").exists() or Path("/dev/rtc1").exists(),
+        "hwclockOk": bool(hwclock["ok"]),
+        "hwclockTime": normalize_text(hwclock["stdout"], ""),
+        "error": normalize_text(hwclock["stderr"] or hwclock["stdout"], "") if not hwclock["ok"] else "",
+    }
+
+
 def run_cmd(args: list[str], timeout_s: int = 20) -> dict[str, Any]:
     try:
         proc = subprocess.run(
@@ -965,6 +1087,7 @@ def system_info() -> dict[str, Any]:
         "hostname": socket.gethostname(),
         "ips": ips,
         "interfaces": interfaces,
+        "rtc": rtc_system_status(),
         "services": {
             "app": service_status("sheltr.service"),
             "newt": service_status("newt.service"),
@@ -1948,6 +2071,7 @@ def api_system_info() -> dict[str, Any]:
         "networkConfig": as_dict(cfg.get("network")),
         "newtConfig": as_dict(cfg.get("newt")),
         "mqttConfig": as_dict(cfg.get("mqtt")),
+        "rtcConfig": as_dict(cfg.get("rtc")),
     }
 
 
@@ -2017,6 +2141,47 @@ def api_admin_apply_network() -> dict[str, Any]:
         "ipMethod": ip_method,
         "system": system_info(),
         "message": f"Configurazione rete applicata ({mode}, {ip_method})",
+    }
+
+
+def api_admin_apply_rtc() -> dict[str, Any]:
+    cfg = get_config()
+    rtc = rtc_runtime_payload(cfg)
+    run_admin_action(
+        "apply-rtc",
+        [
+            "1" if rtc["enabled"] else "0",
+            str(rtc["model"]),
+            str(rtc["bus"]),
+            str(rtc["address"]),
+        ],
+    )
+    return {
+        "ok": True,
+        "rtc": rtc,
+        "system": system_info(),
+        "message": (
+            f"RTC applicato ({rtc['model']} bus {rtc['bus']} addr {rtc['address']}, enabled={1 if rtc['enabled'] else 0})."
+            " Se hai cambiato overlay potrebbe servire un reboot."
+        ),
+    }
+
+
+def api_admin_sync_rtc(query: dict[str, list[str]]) -> dict[str, Any]:
+    mode = normalize_text(query_value(query, "mode"), "from-rtc").lower()
+    if mode in {"from-rtc", "read", "load"}:
+        run_admin_action("sync-rtc", ["from-rtc"])
+        message = "Ora sistema sincronizzata da RTC"
+    elif mode in {"to-rtc", "write", "save"}:
+        run_admin_action("sync-rtc", ["to-rtc"])
+        message = "RTC sincronizzato da ora sistema"
+    else:
+        raise ValueError("mode non valido: usa from-rtc o to-rtc")
+    return {
+        "ok": True,
+        "mode": mode,
+        "system": system_info(),
+        "message": message,
     }
 
 
@@ -2152,6 +2317,14 @@ class AlgoHandler(BaseHTTPRequestHandler):
 
                 if path == "/api/admin/apply-network":
                     self._json(HTTPStatus.OK, api_admin_apply_network())
+                    return
+
+                if path == "/api/admin/apply-rtc":
+                    self._json(HTTPStatus.OK, api_admin_apply_rtc())
+                    return
+
+                if path == "/api/admin/sync-rtc":
+                    self._json(HTTPStatus.OK, api_admin_sync_rtc(query))
                     return
 
                 self._json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Endpoint non trovato"})

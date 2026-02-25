@@ -26,6 +26,12 @@
     "qos": 0,
     "retain": true
   },
+  "rtc": {
+    "enabled": false,
+    "model": "ds3231",
+    "bus": 1,
+    "address": "0x68"
+  },
   "network": {
     "mode": "ethernet",
     "wifi": {

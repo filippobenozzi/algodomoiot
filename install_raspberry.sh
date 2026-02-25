@@ -19,6 +19,7 @@ NEWT_ENV_FILE="${CONFIG_DIR}/newt.env"
 MQTT_ENV_FILE="${CONFIG_DIR}/mqtt.env"
 ADMIN_DIR="/usr/local/lib/sheltr-admin"
 NEWT_WATCHDOG_SCRIPT="${ADMIN_DIR}/newt_watchdog.sh"
+RTC_CONTROL_SCRIPT="${ADMIN_DIR}/rtc_control.sh"
 STACK_CONTROL_BIN="/usr/local/bin/sheltr-stack"
 SUDOERS_FILE="/etc/sudoers.d/${APP_NAME}-admin"
 NEED_REBOOT=0
@@ -48,6 +49,11 @@ fi
 if ! command -v sudo >/dev/null 2>&1; then
   apt-get update
   apt-get install -y sudo
+fi
+
+if ! command -v i2cdetect >/dev/null 2>&1; then
+  apt-get update
+  apt-get install -y i2c-tools
 fi
 
 if ! python3 -c "import paho.mqtt.client" >/dev/null 2>&1; then
@@ -135,6 +141,7 @@ install -m 644 "${INSTALL_DIR}/deploy/newt-watchdog.timer" "${NEWT_WATCHDOG_TIME
 install -m 750 "${INSTALL_DIR}/deploy/admin_control.sh" "${ADMIN_DIR}/admin_control.sh"
 install -m 750 "${INSTALL_DIR}/deploy/apply_network.sh" "${ADMIN_DIR}/apply_network.sh"
 install -m 750 "${INSTALL_DIR}/deploy/newt_watchdog.sh" "${NEWT_WATCHDOG_SCRIPT}"
+install -m 750 "${INSTALL_DIR}/deploy/rtc_control.sh" "${RTC_CONTROL_SCRIPT}"
 install -m 755 "${INSTALL_DIR}/deploy/stack_control.sh" "${STACK_CONTROL_BIN}"
 
 cat > "${SUDOERS_FILE}" <<EOF
@@ -142,9 +149,9 @@ ${APP_USER} ALL=(root) NOPASSWD: ${ADMIN_DIR}/admin_control.sh *
 EOF
 
 chown -R "${APP_USER}:${APP_GROUP}" "${INSTALL_DIR}" "${CONFIG_DIR}"
-chown root:root "${ADMIN_DIR}/admin_control.sh" "${ADMIN_DIR}/apply_network.sh" "${NEWT_WATCHDOG_SCRIPT}" "${STACK_CONTROL_BIN}" "${SUDOERS_FILE}"
+chown root:root "${ADMIN_DIR}/admin_control.sh" "${ADMIN_DIR}/apply_network.sh" "${NEWT_WATCHDOG_SCRIPT}" "${RTC_CONTROL_SCRIPT}" "${STACK_CONTROL_BIN}" "${SUDOERS_FILE}"
 chmod 755 "${ADMIN_DIR}"
-chmod 750 "${ADMIN_DIR}/admin_control.sh" "${ADMIN_DIR}/apply_network.sh" "${NEWT_WATCHDOG_SCRIPT}"
+chmod 750 "${ADMIN_DIR}/admin_control.sh" "${ADMIN_DIR}/apply_network.sh" "${NEWT_WATCHDOG_SCRIPT}" "${RTC_CONTROL_SCRIPT}"
 chmod 440 "${SUDOERS_FILE}"
 chmod 750 "${INSTALL_DIR}" "${CONFIG_DIR}"
 chmod 640 "${CONFIG_DIR}/config.json" "${CONFIG_DIR}/state.json"
