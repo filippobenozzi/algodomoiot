@@ -97,8 +97,42 @@ hwclock_cmd() {
   return 1
 }
 
+pick_rtc_dev() {
+  local prefer_model="${1:-}" r dev name
+  for r in /sys/class/rtc/rtc*; do
+    [[ -d "${r}" ]] || continue
+    dev="/dev/$(basename "${r}")"
+    [[ -e "${dev}" ]] || continue
+    name="$(cat "${r}/name" 2>/dev/null || true)"
+    if [[ -n "${prefer_model}" && "${name,,}" == *"${prefer_model,,}"* ]]; then
+      printf '%s\n' "${dev}"
+      return 0
+    fi
+  done
+  for dev in /dev/rtc0 /dev/rtc1 /dev/rtc; do
+    [[ -e "${dev}" ]] && { printf '%s\n' "${dev}"; return 0; }
+  done
+  for r in /sys/class/rtc/rtc*; do
+    [[ -d "${r}" ]] || continue
+    dev="/dev/$(basename "${r}")"
+    [[ -e "${dev}" ]] && { printf '%s\n' "${dev}"; return 0; }
+  done
+  return 1
+}
+
+attach_runtime_rtc() {
+  local bus="$1" model="$2" addr="$3" adapter
+  adapter="/sys/class/i2c-adapter/i2c-${bus}"
+  [[ -d "${adapter}" ]] || return 1
+  modprobe rtc_ds1307 >/dev/null 2>&1 || true
+  if [[ -w "${adapter}/new_device" ]]; then
+    printf '%s %s\n' "${model}" "${addr}" > "${adapter}/new_device" 2>/dev/null || true
+  fi
+  return 0
+}
+
 apply_rtc() {
-  local enabled model bus addr cfg tmp changed overlay_line current updated hwc
+  local enabled model bus addr cfg tmp changed overlay_line current updated hwc rtcdev
   enabled="${1:-0}"
   model="$(normalize_model "${2:-ds3231}")"
   bus="$(normalize_bus "${3:-1}")"
@@ -133,9 +167,19 @@ apply_rtc() {
 
   if [[ "${enabled}" == "1" ]]; then
     disable_fake_hwclock
+    rtcdev="$(pick_rtc_dev "${model}" || true)"
+    if [[ -z "${rtcdev}" ]]; then
+      attach_runtime_rtc "${bus}" "${model}" "${addr}" || true
+      rtcdev="$(pick_rtc_dev "${model}" || true)"
+    fi
     if hwc="$(hwclock_cmd)"; then
-      "${hwc}" -r >/dev/null 2>&1 || true
-      "${hwc}" -s >/dev/null 2>&1 || true
+      if [[ -n "${rtcdev}" ]]; then
+        "${hwc}" -f "${rtcdev}" -r >/dev/null 2>&1 || true
+        "${hwc}" -f "${rtcdev}" -s >/dev/null 2>&1 || true
+      else
+        "${hwc}" -r >/dev/null 2>&1 || true
+        "${hwc}" -s >/dev/null 2>&1 || true
+      fi
     else
       echo "Warning: hwclock non disponibile, sincronizzazione ora saltata"
     fi
@@ -150,17 +194,21 @@ apply_rtc() {
 }
 
 sync_rtc() {
-  local mode="${1:-from-rtc}" hwc
+  local mode="${1:-from-rtc}" hwc rtcdev
   if ! hwc="$(hwclock_cmd)"; then
     die "Comando hwclock non disponibile"
   fi
+  rtcdev="$(pick_rtc_dev "" || true)"
+  if [[ -z "${rtcdev}" ]]; then
+    die "Nessun device RTC trovato (/dev/rtc*). Se hai appena applicato overlay RTC, esegui reboot."
+  fi
   case "${mode}" in
     from-rtc)
-      "${hwc}" -s
+      "${hwc}" -f "${rtcdev}" -s
       echo "Ora sistema sincronizzata da RTC"
       ;;
     to-rtc)
-      "${hwc}" -w
+      "${hwc}" -f "${rtcdev}" -w
       echo "RTC sincronizzato da ora sistema"
       ;;
     *)

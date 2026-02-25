@@ -958,6 +958,42 @@ def hwclock_binary() -> str:
     return ""
 
 
+def list_rtc_devices() -> list[dict[str, Any]]:
+    devices: list[dict[str, Any]] = []
+    for node in sorted(Path("/sys/class/rtc").glob("rtc*")):
+        dev_path = Path("/dev") / node.name
+        try:
+            name = (node / "name").read_text(encoding="utf-8").strip()
+        except Exception:
+            name = ""
+        devices.append(
+            {
+                "node": node.name,
+                "path": str(dev_path),
+                "name": name,
+                "present": dev_path.exists(),
+            }
+        )
+    return devices
+
+
+def pick_rtc_device(devices: list[dict[str, Any]], prefer_model: str = "") -> str:
+    model = normalize_text(prefer_model, "").lower()
+    if model:
+        for item in devices:
+            if not bool(item.get("present")):
+                continue
+            if model in normalize_text(item.get("name"), "").lower():
+                return normalize_text(item.get("path"), "")
+    for preferred in ("/dev/rtc0", "/dev/rtc1", "/dev/rtc"):
+        if Path(preferred).exists():
+            return preferred
+    for item in devices:
+        if bool(item.get("present")):
+            return normalize_text(item.get("path"), "")
+    return ""
+
+
 def rtc_system_status() -> dict[str, Any]:
     rtc_cfg = rtc_runtime_payload(get_config())
     cfg_path = boot_config_path()
@@ -993,9 +1029,14 @@ def rtc_system_status() -> dict[str, Any]:
             pass
 
     bus = int(rtc_cfg["bus"])
+    devices = list_rtc_devices()
+    rtc_device = pick_rtc_device(devices, str(rtc_cfg["model"]))
     hwclock_cmd = hwclock_binary()
     if hwclock_cmd:
-        hwclock = run_cmd([hwclock_cmd, "-r"], timeout_s=6)
+        if rtc_device:
+            hwclock = run_cmd([hwclock_cmd, "-f", rtc_device, "-r"], timeout_s=6)
+        else:
+            hwclock = run_cmd([hwclock_cmd, "-r"], timeout_s=6)
     else:
         hwclock = {"ok": False, "stdout": "", "stderr": "Comando hwclock non disponibile"}
     return {
@@ -1010,6 +1051,8 @@ def rtc_system_status() -> dict[str, Any]:
         "overlayAddress": overlay_address,
         "i2cDevicePresent": Path(f"/dev/i2c-{bus}").exists(),
         "rtcDevicePresent": Path("/dev/rtc0").exists() or Path("/dev/rtc1").exists(),
+        "rtcDevice": rtc_device,
+        "rtcDevices": devices,
         "hwclockPath": hwclock_cmd,
         "hwclockOk": bool(hwclock["ok"]),
         "hwclockTime": normalize_text(hwclock["stdout"], ""),
