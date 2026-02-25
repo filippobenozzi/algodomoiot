@@ -56,9 +56,20 @@ if ! command -v i2cdetect >/dev/null 2>&1; then
   apt-get install -y i2c-tools
 fi
 
-if ! command -v hwclock >/dev/null 2>&1 && [[ ! -x /usr/sbin/hwclock && ! -x /sbin/hwclock ]]; then
+has_hwclock() {
+  command -v hwclock >/dev/null 2>&1 || [[ -x /usr/sbin/hwclock || -x /sbin/hwclock || -x /usr/bin/hwclock || -x /bin/hwclock ]]
+}
+
+if ! has_hwclock; then
+  echo "Installo hwclock..."
   apt-get update
-  apt-get install -y util-linux
+  apt-get install -y util-linux-extra || true
+  has_hwclock || apt-get install -y util-linux || true
+  if ! has_hwclock; then
+    echo "Errore: hwclock non disponibile dopo installazione pacchetti util-linux." >&2
+    echo "Installa manualmente hwclock e rilancia install_raspberry.sh." >&2
+    exit 1
+  fi
 fi
 
 if ! python3 -c "import paho.mqtt.client" >/dev/null 2>&1; then

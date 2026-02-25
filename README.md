@@ -125,7 +125,7 @@ L'installer:
 - abilita/avvia `sheltr.service`
 - installa/abilita `newt.service` (avvio effettivo quando `NEWT_ENABLED=1` e credenziali presenti)
 - installa/abilita `sheltr-mqtt.service` (avvio effettivo quando `MQTT_ENABLED=1` e parametri validi)
-- installa strumenti I2C (`i2c-tools`) e script amministrativo RTC
+- installa strumenti I2C (`i2c-tools`), `hwclock` (`util-linux-extra`/`util-linux`) e script amministrativo RTC
 - aggiunge utente servizio al gruppo `dialout` (se presente)
 - disabilita e mette in `mask` `serial-getty@ttyS0.service` e `serial-getty@serial0.service`
 - rimuove la console seriale da `cmdline.txt` (con backup automatico)
