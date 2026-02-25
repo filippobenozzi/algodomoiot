@@ -134,9 +134,8 @@ def default_thermostat_profile() -> dict[str, Any]:
     return {"enabled": False, "entries": []}
 
 
-def default_switch_profile(kind: str) -> dict[str, Any]:
-    action = "up" if kind == "shutter" else "off"
-    return {"enabled": False, "time": "00:00", "action": action, "days": WEEKDAY_ALL.copy()}
+def default_switch_profile(_kind: str) -> dict[str, Any]:
+    return {"enabled": False, "entries": []}
 
 
 def normalize_hhmm(value: Any, fallback: str = "00:00") -> str:
@@ -229,19 +228,42 @@ def normalize_thermostat_profile(profile_any: Any) -> dict[str, Any]:
 
 
 def normalize_switch_profile(profile_any: Any, kind: str) -> dict[str, Any]:
-    fallback = default_switch_profile(kind)
+    fallback_action = "up" if kind == "shutter" else "off"
     profile = profile_any if isinstance(profile_any, dict) else {}
-    action_raw = normalize_text(profile.get("action"), fallback["action"]).lower()
-    if kind == "shutter":
-        action = "up" if action_raw == "up" else "down"
-    else:
-        action = "on" if action_raw == "on" else "off"
-    return {
-        "enabled": bool_value(profile.get("enabled")),
-        "time": normalize_hhmm(profile.get("time"), "00:00"),
-        "action": action,
-        "days": normalize_weekdays(profile.get("days")),
-    }
+    entries: list[dict[str, Any]] = []
+    raw_entries = as_list(profile.get("entries"))
+    if raw_entries:
+        for item in raw_entries:
+            entry = item if isinstance(item, dict) else {}
+            action_raw = normalize_text(entry.get("action"), fallback_action).lower()
+            if kind == "shutter":
+                action = "up" if action_raw == "up" else "down"
+            else:
+                action = "on" if action_raw == "on" else "off"
+            entries.append(
+                {
+                    "time": normalize_hhmm(entry.get("time"), "00:00"),
+                    "action": action,
+                    "days": normalize_weekdays(entry.get("days")),
+                }
+            )
+            if len(entries) >= 48:
+                break
+    elif any(key in profile for key in ("time", "action", "days")):
+        # Compatibilita con formato precedente singolo orario.
+        action_raw = normalize_text(profile.get("action"), fallback_action).lower()
+        if kind == "shutter":
+            action = "up" if action_raw == "up" else "down"
+        else:
+            action = "on" if action_raw == "on" else "off"
+        entries.append(
+            {
+                "time": normalize_hhmm(profile.get("time"), "00:00"),
+                "action": action,
+                "days": normalize_weekdays(profile.get("days")),
+            }
+        )
+    return {"enabled": bool_value(profile.get("enabled")), "entries": entries}
 
 
 def thermostat_profile_target(profile: dict[str, Any], now_minute: int, now_weekday: int) -> tuple[float, str]:
@@ -1566,30 +1588,32 @@ def apply_switch_profiles_once() -> None:
             if ch < 1:
                 continue
             item_id = entity_id(board_id, ch)
-            cache_key = f"{kind}:{item_id}"
-            valid_keys.add(cache_key)
-
             profile = normalize_switch_profile(channel.get("profile"), kind)
             if not profile.get("enabled"):
                 continue
-            if now_weekday not in normalize_weekdays(profile.get("days")):
-                continue
-            trigger_minute = hhmm_to_minute(normalize_hhmm(profile.get("time"), "00:00"))
-            if now_minute != trigger_minute:
-                continue
-            if SWITCH_PROFILE_LAST_RUN.get(cache_key) == minute_stamp:
-                continue
+            entries = as_list(profile.get("entries"))
+            for idx, entry_any in enumerate(entries):
+                entry = entry_any if isinstance(entry_any, dict) else {}
+                cache_key = f"{kind}:{item_id}:{idx}"
+                valid_keys.add(cache_key)
+                if now_weekday not in normalize_weekdays(entry.get("days")):
+                    continue
+                trigger_minute = hhmm_to_minute(normalize_hhmm(entry.get("time"), "00:00"))
+                if now_minute != trigger_minute:
+                    continue
+                if SWITCH_PROFILE_LAST_RUN.get(cache_key) == minute_stamp:
+                    continue
 
-            try:
-                if kind == "light":
-                    action = "on" if normalize_text(profile.get("action"), "off").lower() == "on" else "off"
-                    api_light({"id": [item_id], "action": [action]})
-                else:
-                    action = "up" if normalize_text(profile.get("action"), "down").lower() == "up" else "down"
-                    api_shutter({"id": [item_id], "action": [action]})
-                SWITCH_PROFILE_LAST_RUN[cache_key] = minute_stamp
-            except Exception as exc:  # noqa: BLE001
-                print(f"[warn] profilo {kind} {item_id} fallito:", exc)
+                try:
+                    if kind == "light":
+                        action = "on" if normalize_text(entry.get("action"), "off").lower() == "on" else "off"
+                        api_light({"id": [item_id], "action": [action]})
+                    else:
+                        action = "up" if normalize_text(entry.get("action"), "down").lower() == "up" else "down"
+                        api_shutter({"id": [item_id], "action": [action]})
+                    SWITCH_PROFILE_LAST_RUN[cache_key] = minute_stamp
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[warn] profilo {kind} {item_id}#{idx} fallito:", exc)
 
     stale = [key for key in SWITCH_PROFILE_LAST_RUN if key not in valid_keys]
     for key in stale:
