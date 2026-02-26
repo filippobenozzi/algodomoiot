@@ -86,7 +86,7 @@ is_mqtt_configured() {
 
 lock_serial_for_app() {
   local unit
-  for unit in serial-getty@ttyS0.service serial-getty@serial0.service serial-getty@ttyAMA0.service; do
+  for unit in serial-getty@ttyS0.service serial-getty@serial0.service serial-getty@ttyAMA0.service serial-getty@ttyAMA10.service; do
     systemctl disable --now "${unit}" >/dev/null 2>&1 || true
     systemctl mask "${unit}" >/dev/null 2>&1 || true
   done
@@ -94,6 +94,7 @@ lock_serial_for_app() {
     fuser -k /dev/ttyS0 >/dev/null 2>&1 || true
     [[ -e /dev/serial0 ]] && fuser -k /dev/serial0 >/dev/null 2>&1 || true
     [[ -e /dev/ttyAMA0 ]] && fuser -k /dev/ttyAMA0 >/dev/null 2>&1 || true
+    [[ -e /dev/ttyAMA10 ]] && fuser -k /dev/ttyAMA10 >/dev/null 2>&1 || true
   fi
 }
 

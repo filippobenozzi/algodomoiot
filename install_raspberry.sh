@@ -90,30 +90,82 @@ if ! command -v newt >/dev/null 2>&1; then
   curl -fsSL https://static.pangolin.net/get-newt.sh | bash || true
 fi
 
+pick_boot_file() {
+  local name="$1" cand found
+  for cand in "/boot/firmware/${name}" "/boot/${name}"; do
+    if [[ -f "${cand}" ]]; then
+      printf '%s\n' "${cand}"
+      return 0
+    fi
+  done
+  found="$(find /boot -maxdepth 3 -type f -name "${name}" 2>/dev/null | head -n 1 || true)"
+  if [[ -n "${found}" ]]; then
+    printf '%s\n' "${found}"
+    return 0
+  fi
+  return 1
+}
+
+pick_uart_cfg_target() {
+  local base cfg user
+  for base in /boot/firmware /boot; do
+    cfg="${base}/config.txt"
+    user="${base}/usercfg.txt"
+    if [[ -f "${cfg}" ]]; then
+      if [[ -f "${user}" ]]; then
+        printf '%s\n' "${user}"
+        return 0
+      fi
+      if grep -Eq '^[[:space:]]*include[[:space:]]+usercfg\.txt([[:space:]]*(#.*)?)?$' "${cfg}" 2>/dev/null; then
+        printf '%s\n' "${user}"
+        return 0
+      fi
+      printf '%s\n' "${cfg}"
+      return 0
+    fi
+  done
+  pick_boot_file "config.txt" || return 1
+}
+
 # Disabilita in modo persistente il getty sulla seriale
-for unit in serial-getty@ttyS0.service serial-getty@serial0.service serial-getty@ttyAMA0.service; do
+for unit in serial-getty@ttyS0.service serial-getty@serial0.service serial-getty@ttyAMA0.service serial-getty@ttyAMA10.service; do
   systemctl disable --now "${unit}" >/dev/null 2>&1 || true
   systemctl mask "${unit}" >/dev/null 2>&1 || true
 done
 
 # Rimuove console seriale dal kernel cmdline (persistente ai reboot)
-CMDLINE_FILE=""
-if [[ -f /boot/firmware/cmdline.txt ]]; then
-  CMDLINE_FILE="/boot/firmware/cmdline.txt"
-elif [[ -f /boot/cmdline.txt ]]; then
-  CMDLINE_FILE="/boot/cmdline.txt"
-fi
+CMDLINE_FILE="$(pick_boot_file "cmdline.txt" || true)"
 
 if [[ -n "${CMDLINE_FILE}" ]]; then
   CURRENT_CMDLINE="$(tr -d '\n' < "${CMDLINE_FILE}")"
   UPDATED_CMDLINE="$(printf '%s\n' "${CURRENT_CMDLINE}" \
-    | sed -E 's/(^| )console=serial0,[^ ]+//g; s/(^| )console=ttyAMA0,[^ ]+//g; s/(^| )console=ttyS0,[^ ]+//g; s/[[:space:]]+/ /g; s/^ //; s/ $//')"
+    | sed -E 's/(^| )console=serial0,[^ ]+//g; s/(^| )console=ttyAMA0,[^ ]+//g; s/(^| )console=ttyAMA10,[^ ]+//g; s/(^| )console=ttyS0,[^ ]+//g; s/[[:space:]]+/ /g; s/^ //; s/ $//')"
 
   if [[ "${UPDATED_CMDLINE}" != "${CURRENT_CMDLINE}" && -n "${UPDATED_CMDLINE}" ]]; then
     cp "${CMDLINE_FILE}" "${CMDLINE_FILE}.bak.$(date +%Y%m%d%H%M%S)"
     printf '%s\n' "${UPDATED_CMDLINE}" > "${CMDLINE_FILE}"
     NEED_REBOOT=1
   fi
+fi
+
+# Forza UART hardware abilitata (necessario per /dev/ttyS0)
+BOOT_CFG_FILE="$(pick_uart_cfg_target || true)"
+
+if [[ -n "${BOOT_CFG_FILE}" ]]; then
+  mkdir -p "$(dirname "${BOOT_CFG_FILE}")"
+  [[ -f "${BOOT_CFG_FILE}" ]] || install -m 644 /dev/null "${BOOT_CFG_FILE}"
+  CURRENT_BOOT_CFG="$(cat "${BOOT_CFG_FILE}")"
+  UPDATED_BOOT_CFG="$(printf '%s\n' "${CURRENT_BOOT_CFG}" | sed -E 's/^[[:space:]]*enable_uart=.*/enable_uart=1/g')"
+  if ! printf '%s\n' "${UPDATED_BOOT_CFG}" | grep -Eq '^[[:space:]]*enable_uart=1([[:space:]]*(#.*)?)?$'; then
+    UPDATED_BOOT_CFG="${UPDATED_BOOT_CFG}"$'\n''enable_uart=1'
+  fi
+  if [[ "${UPDATED_BOOT_CFG}"$'\n' != "${CURRENT_BOOT_CFG}"$'\n' ]]; then
+    cp "${BOOT_CFG_FILE}" "${BOOT_CFG_FILE}.bak.$(date +%Y%m%d%H%M%S)"
+    printf '%s\n' "${UPDATED_BOOT_CFG}" > "${BOOT_CFG_FILE}"
+    NEED_REBOOT=1
+  fi
+else
+  echo "Warning: file config.txt non trovato sotto /boot; impossibile forzare enable_uart=1 in automatico."
 fi
 
 mkdir -p "${INSTALL_DIR}" "${CONFIG_DIR}" "${ADMIN_DIR}"

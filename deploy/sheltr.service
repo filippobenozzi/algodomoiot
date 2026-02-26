@@ -2,7 +2,7 @@
 Description=Sheltr Python Web/API Service
 After=network-online.target
 Wants=network-online.target
-Conflicts=serial-getty@ttyS0.service serial-getty@serial0.service
+Conflicts=serial-getty@ttyS0.service serial-getty@serial0.service serial-getty@ttyAMA0.service serial-getty@ttyAMA10.service
 
 [Service]
 Type=simple
@@ -21,8 +21,12 @@ Environment=SHELTR_MQTT_ENV=/etc/sheltr/mqtt.env
 Environment=SHELTR_ADMIN_SCRIPT=/usr/local/lib/sheltr-admin/admin_control.sh
 ExecStartPre=-/usr/bin/systemctl stop serial-getty@ttyS0.service
 ExecStartPre=-/usr/bin/systemctl stop serial-getty@serial0.service
+ExecStartPre=-/usr/bin/systemctl stop serial-getty@ttyAMA0.service
+ExecStartPre=-/usr/bin/systemctl stop serial-getty@ttyAMA10.service
 ExecStartPre=/bin/sh -c 'if command -v fuser >/dev/null 2>&1; then fuser -k /dev/ttyS0 >/dev/null 2>&1 || true; fi'
 ExecStartPre=/bin/sh -c 'if [ -e /dev/serial0 ] && command -v fuser >/dev/null 2>&1; then fuser -k /dev/serial0 >/dev/null 2>&1 || true; fi'
+ExecStartPre=/bin/sh -c 'if [ -e /dev/ttyAMA0 ] && command -v fuser >/dev/null 2>&1; then fuser -k /dev/ttyAMA0 >/dev/null 2>&1 || true; fi'
+ExecStartPre=/bin/sh -c 'if [ -e /dev/ttyAMA10 ] && command -v fuser >/dev/null 2>&1; then fuser -k /dev/ttyAMA10 >/dev/null 2>&1 || true; fi'
 ExecStart=/usr/bin/python3 /opt/sheltr/app.py
 Restart=always
 RestartSec=2

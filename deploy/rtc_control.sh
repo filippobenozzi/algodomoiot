@@ -11,6 +11,7 @@ die() {
 }
 
 pick_boot_cfg() {
+  local found
   if [[ -n "${SHELTR_BOOT_CONFIG:-}" && -f "${SHELTR_BOOT_CONFIG}" ]]; then
     printf '%s' "${SHELTR_BOOT_CONFIG}"
     return 0
@@ -21,6 +22,11 @@ pick_boot_cfg() {
   fi
   if [[ -f "${BOOT_CFG_FALLBACK}" ]]; then
     printf '%s' "${BOOT_CFG_FALLBACK}"
+    return 0
+  fi
+  found="$(find /boot -maxdepth 3 -type f -name config.txt 2>/dev/null | head -n 1 || true)"
+  if [[ -n "${found}" ]]; then
+    printf '%s' "${found}"
     return 0
   fi
   return 1

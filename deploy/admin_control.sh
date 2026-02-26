@@ -32,7 +32,10 @@ case "${ACTION}" in
     ;;
   unlock-serial)
     PORT="${2:-/dev/ttyS0}"
-    for unit in serial-getty@ttyS0.service serial-getty@serial0.service serial-getty@ttyAMA0.service; do
+    modprobe serial8250 >/dev/null 2>&1 || true
+    modprobe bcm2835_aux >/dev/null 2>&1 || true
+    modprobe 8250_bcm2835aux >/dev/null 2>&1 || true
+    for unit in serial-getty@ttyS0.service serial-getty@serial0.service serial-getty@ttyAMA0.service serial-getty@ttyAMA10.service; do
       systemctl disable --now "${unit}" >/dev/null 2>&1 || true
       systemctl mask "${unit}" >/dev/null 2>&1 || true
     done
@@ -40,8 +43,10 @@ case "${ACTION}" in
       fuser -k /dev/ttyS0 >/dev/null 2>&1 || true
       [[ -e /dev/serial0 ]] && fuser -k /dev/serial0 >/dev/null 2>&1 || true
       [[ -e /dev/ttyAMA0 ]] && fuser -k /dev/ttyAMA0 >/dev/null 2>&1 || true
-      [[ -n "${PORT}" && "${PORT}" != "/dev/ttyS0" && "${PORT}" != "/dev/serial0" && "${PORT}" != "/dev/ttyAMA0" ]] && fuser -k "${PORT}" >/dev/null 2>&1 || true
+      [[ -e /dev/ttyAMA10 ]] && fuser -k /dev/ttyAMA10 >/dev/null 2>&1 || true
+      [[ -n "${PORT}" && "${PORT}" != "/dev/ttyS0" && "${PORT}" != "/dev/serial0" && "${PORT}" != "/dev/ttyAMA0" && "${PORT}" != "/dev/ttyAMA10" ]] && fuser -k "${PORT}" >/dev/null 2>&1 || true
     fi
+    command -v udevadm >/dev/null 2>&1 && udevadm settle >/dev/null 2>&1 || true
     echo "Seriale liberata (${PORT})"
     ;;
   apply-network)

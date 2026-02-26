@@ -1312,6 +1312,26 @@ def should_unlock_serial(exc: OSError) -> bool:
     return "resource busy" in err_txt or "device or resource busy" in err_txt
 
 
+def serial_alias_for(port: str) -> str:
+    if port == "/dev/ttyS0":
+        for cand in ("/dev/serial0", "/dev/ttyAMA0", "/dev/ttyAMA10"):
+            if Path(cand).exists():
+                return cand
+    if port == "/dev/serial0":
+        for cand in ("/dev/ttyS0", "/dev/ttyAMA0", "/dev/ttyAMA10"):
+            if Path(cand).exists():
+                return cand
+    if port == "/dev/ttyAMA0":
+        for cand in ("/dev/serial0", "/dev/ttyS0", "/dev/ttyAMA10"):
+            if Path(cand).exists():
+                return cand
+    if port == "/dev/ttyAMA10":
+        for cand in ("/dev/serial0", "/dev/ttyS0", "/dev/ttyAMA0"):
+            if Path(cand).exists():
+                return cand
+    return ""
+
+
 def send_raw(payload: bytes, expect_frame: bool = True, expected_bytes: int = 1) -> Any:
     cfg = get_config()
     serial_cfg = cfg.get("serial", {})
@@ -1325,19 +1345,34 @@ def send_raw(payload: bytes, expect_frame: bool = True, expected_bytes: int = 1)
     with SERIAL_LOCK:
         fd = -1
         unlocked = False
+        active_port = port
         try:
-            try:
-                fd = os.open(port, os.O_RDWR | os.O_NOCTTY | os.O_SYNC)
-            except OSError as exc:
-                if not should_unlock_serial(exc):
-                    raise RuntimeError(f"Errore seriale su {port}: {exc}") from exc
+            while True:
                 try:
-                    run_admin_action("unlock-serial", [port])
-                    unlocked = True
-                except Exception as unlock_exc:  # noqa: BLE001
-                    raise RuntimeError(f"Errore seriale su {port}: {exc} | unlock fallito: {unlock_exc}") from exc
-                time.sleep(0.25)
-                fd = os.open(port, os.O_RDWR | os.O_NOCTTY | os.O_SYNC)
+                    fd = os.open(active_port, os.O_RDWR | os.O_NOCTTY | os.O_SYNC)
+                    break
+                except OSError as exc:
+                    can_unlock = should_unlock_serial(exc) or exc.errno == errno.ENOENT
+                    if can_unlock and not unlocked:
+                        try:
+                            run_admin_action("unlock-serial", [port])
+                            unlocked = True
+                            time.sleep(0.25)
+                            continue
+                        except Exception as unlock_exc:  # noqa: BLE001
+                            raise RuntimeError(
+                                f"Errore seriale su {port}: {exc} | unlock fallito: {unlock_exc}"
+                            ) from exc
+                    if exc.errno == errno.ENOENT and active_port == port:
+                        alias_port = serial_alias_for(port)
+                        if alias_port:
+                            active_port = alias_port
+                            continue
+                    if active_port != port:
+                        raise RuntimeError(
+                            f"Errore seriale su {port} (fallback {active_port}): {exc}"
+                        ) from exc
+                    raise RuntimeError(f"Errore seriale su {port}: {exc}") from exc
 
             configure_serial_port(fd, baudrate)
             os.write(fd, payload)
@@ -1366,7 +1401,8 @@ def send_raw(payload: bytes, expect_frame: bool = True, expected_bytes: int = 1)
 
         except OSError as exc:
             prefix = " (unlock eseguito)" if unlocked else ""
-            raise RuntimeError(f"Errore seriale su {port}{prefix}: {exc}") from exc
+            failed_port = active_port or port
+            raise RuntimeError(f"Errore seriale su {failed_port}{prefix}: {exc}") from exc
         finally:
             if fd >= 0:
                 os.close(fd)
