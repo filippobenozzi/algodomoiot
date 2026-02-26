@@ -30,6 +30,20 @@ case "${ACTION}" in
     systemctl stop --no-block sheltr-mqtt.service
     echo "Stop richiesto: sheltr-mqtt.service"
     ;;
+  unlock-serial)
+    PORT="${2:-/dev/ttyS0}"
+    for unit in serial-getty@ttyS0.service serial-getty@serial0.service serial-getty@ttyAMA0.service; do
+      systemctl disable --now "${unit}" >/dev/null 2>&1 || true
+      systemctl mask "${unit}" >/dev/null 2>&1 || true
+    done
+    if command -v fuser >/dev/null 2>&1; then
+      fuser -k /dev/ttyS0 >/dev/null 2>&1 || true
+      [[ -e /dev/serial0 ]] && fuser -k /dev/serial0 >/dev/null 2>&1 || true
+      [[ -e /dev/ttyAMA0 ]] && fuser -k /dev/ttyAMA0 >/dev/null 2>&1 || true
+      [[ -n "${PORT}" && "${PORT}" != "/dev/ttyS0" && "${PORT}" != "/dev/serial0" && "${PORT}" != "/dev/ttyAMA0" ]] && fuser -k "${PORT}" >/dev/null 2>&1 || true
+    fi
+    echo "Seriale liberata (${PORT})"
+    ;;
   apply-network)
     MODE="${2:-}"
     SSID="${3:-}"

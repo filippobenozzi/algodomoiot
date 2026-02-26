@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Sheltr lightweight web app over serial /dev/ttyS0."""
+"""Sheltr lightweight web app over serial port."""
 
 from __future__ import annotations
 
 import copy
+import errno
 import hashlib
 import json
 import math
@@ -1304,6 +1305,13 @@ def configure_serial_port(fd: int, baudrate: int) -> None:
     termios.tcflush(fd, termios.TCIOFLUSH)
 
 
+def should_unlock_serial(exc: OSError) -> bool:
+    if exc.errno in {errno.EBUSY, errno.EACCES, errno.EPERM}:
+        return True
+    err_txt = normalize_text(str(exc), "").lower()
+    return "resource busy" in err_txt or "device or resource busy" in err_txt
+
+
 def send_raw(payload: bytes, expect_frame: bool = True, expected_bytes: int = 1) -> Any:
     cfg = get_config()
     serial_cfg = cfg.get("serial", {})
@@ -1316,8 +1324,21 @@ def send_raw(payload: bytes, expect_frame: bool = True, expected_bytes: int = 1)
 
     with SERIAL_LOCK:
         fd = -1
+        unlocked = False
         try:
-            fd = os.open(port, os.O_RDWR | os.O_NOCTTY | os.O_SYNC)
+            try:
+                fd = os.open(port, os.O_RDWR | os.O_NOCTTY | os.O_SYNC)
+            except OSError as exc:
+                if not should_unlock_serial(exc):
+                    raise RuntimeError(f"Errore seriale su {port}: {exc}") from exc
+                try:
+                    run_admin_action("unlock-serial", [port])
+                    unlocked = True
+                except Exception as unlock_exc:  # noqa: BLE001
+                    raise RuntimeError(f"Errore seriale su {port}: {exc} | unlock fallito: {unlock_exc}") from exc
+                time.sleep(0.25)
+                fd = os.open(port, os.O_RDWR | os.O_NOCTTY | os.O_SYNC)
+
             configure_serial_port(fd, baudrate)
             os.write(fd, payload)
             termios.tcdrain(fd)
@@ -1344,7 +1365,8 @@ def send_raw(payload: bytes, expect_frame: bool = True, expected_bytes: int = 1)
                         return received[:min_bytes]
 
         except OSError as exc:
-            raise RuntimeError(f"Errore seriale su {port}: {exc}") from exc
+            prefix = " (unlock eseguito)" if unlocked else ""
+            raise RuntimeError(f"Errore seriale su {port}{prefix}: {exc}") from exc
         finally:
             if fd >= 0:
                 os.close(fd)

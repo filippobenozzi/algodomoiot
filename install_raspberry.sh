@@ -91,7 +91,7 @@ if ! command -v newt >/dev/null 2>&1; then
 fi
 
 # Disabilita in modo persistente il getty sulla seriale
-for unit in serial-getty@ttyS0.service serial-getty@serial0.service; do
+for unit in serial-getty@ttyS0.service serial-getty@serial0.service serial-getty@ttyAMA0.service; do
   systemctl disable --now "${unit}" >/dev/null 2>&1 || true
   systemctl mask "${unit}" >/dev/null 2>&1 || true
 done
