@@ -16,11 +16,16 @@ case "${ACTION}" in
     systemctl restart --no-block sheltr-mqtt.service
     echo "Restart richiesto: sheltr-mqtt.service"
     ;;
+  restart-cloud)
+    systemctl restart --no-block sheltr-cloud.service
+    echo "Restart richiesto: sheltr-cloud.service"
+    ;;
   restart-all)
     systemctl restart --no-block sheltr.service || true
     systemctl restart --no-block newt.service || true
     systemctl restart --no-block sheltr-mqtt.service || true
-    echo "Restart richiesto: sheltr.service,newt.service,sheltr-mqtt.service"
+    systemctl restart --no-block sheltr-cloud.service || true
+    echo "Restart richiesto: sheltr.service,newt.service,sheltr-mqtt.service,sheltr-cloud.service"
     ;;
   stop-newt)
     systemctl stop --no-block newt.service
@@ -29,6 +34,10 @@ case "${ACTION}" in
   stop-mqtt)
     systemctl stop --no-block sheltr-mqtt.service
     echo "Stop richiesto: sheltr-mqtt.service"
+    ;;
+  stop-cloud)
+    systemctl stop --no-block sheltr-cloud.service
+    echo "Stop richiesto: sheltr-cloud.service"
     ;;
   unlock-serial)
     PORT="${2:-/dev/ttyS0}"

@@ -5,6 +5,7 @@ APP_NAME="sheltr"
 APP_SERVICE="${APP_NAME}.service"
 NEWT_SERVICE="newt.service"
 MQTT_SERVICE="sheltr-mqtt.service"
+CLOUD_SERVICE="sheltr-cloud.service"
 WATCHDOG_SERVICE="newt-watchdog.service"
 WATCHDOG_TIMER="newt-watchdog.timer"
 LEGACY_APP_SERVICE="algodomoiot.service"
@@ -13,6 +14,7 @@ SYSTEMD_DIR="/etc/systemd/system"
 ADMIN_DIR="/usr/local/lib/sheltr-admin"
 NEWT_ENV_FILE="/etc/${APP_NAME}/newt.env"
 MQTT_ENV_FILE="/etc/${APP_NAME}/mqtt.env"
+CLOUD_ENV_FILE="/etc/${APP_NAME}/cloud.env"
 DEPLOY_DIR="${SHELTR_DEPLOY_DIR:-${ALGODOMO_DEPLOY_DIR:-/opt/${APP_NAME}/deploy}}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,6 +38,7 @@ ensure_deploy_files() {
     "sheltr.service"
     "newt.service"
     "sheltr-mqtt.service"
+    "sheltr-cloud.service"
     "newt-watchdog.service"
     "newt-watchdog.timer"
     "admin_control.sh"
@@ -43,6 +46,7 @@ ensure_deploy_files() {
     "newt_watchdog.sh"
     "rtc_control.sh"
     "mqtt.env"
+    "cloud.env"
   )
   local item
   for item in "${required[@]}"; do
@@ -67,6 +71,7 @@ install_runtime_files() {
   install -m 644 "${DEPLOY_DIR}/sheltr.service" "${SYSTEMD_DIR}/${APP_SERVICE}"
   install -m 644 "${DEPLOY_DIR}/newt.service" "${SYSTEMD_DIR}/${NEWT_SERVICE}"
   install -m 644 "${DEPLOY_DIR}/sheltr-mqtt.service" "${SYSTEMD_DIR}/${MQTT_SERVICE}"
+  install -m 644 "${DEPLOY_DIR}/sheltr-cloud.service" "${SYSTEMD_DIR}/${CLOUD_SERVICE}"
   install -m 644 "${DEPLOY_DIR}/newt-watchdog.service" "${SYSTEMD_DIR}/${WATCHDOG_SERVICE}"
   install -m 644 "${DEPLOY_DIR}/newt-watchdog.timer" "${SYSTEMD_DIR}/${WATCHDOG_TIMER}"
   install -m 750 "${DEPLOY_DIR}/admin_control.sh" "${ADMIN_DIR}/admin_control.sh"
@@ -82,6 +87,14 @@ is_mqtt_configured() {
     && grep -q '^MQTT_HOST="[^"]\+"' "${MQTT_ENV_FILE}" \
     && grep -q '^MQTT_BASE_TOPIC="[^"]\+"' "${MQTT_ENV_FILE}" \
     && (grep -q '^SHELTR_TOKEN="[^"]\+"' "${MQTT_ENV_FILE}" || grep -q '^ALGODOMO_TOKEN="[^"]\+"' "${MQTT_ENV_FILE}")
+}
+
+is_cloud_configured() {
+  [[ -f "${CLOUD_ENV_FILE}" ]] || return 1
+  grep -q '^CLOUD_MQTT_ENABLED=1' "${CLOUD_ENV_FILE}" \
+    && grep -q '^CLOUD_MQTT_HOST="[^"]\+"' "${CLOUD_ENV_FILE}" \
+    && grep -q '^CLOUD_MQTT_BASE_TOPIC="[^"]\+"' "${CLOUD_ENV_FILE}" \
+    && (grep -q '^SHELTR_TOKEN="[^"]\+"' "${CLOUD_ENV_FILE}" || grep -q '^ALGODOMO_TOKEN="[^"]\+"' "${CLOUD_ENV_FILE}")
 }
 
 lock_serial_for_app() {
@@ -105,6 +118,8 @@ print_status() {
   echo
   systemctl --no-pager --full status "${MQTT_SERVICE}" || true
   echo
+  systemctl --no-pager --full status "${CLOUD_SERVICE}" || true
+  echo
   systemctl --no-pager --full status "${WATCHDOG_TIMER}" || true
 }
 
@@ -118,6 +133,7 @@ enable_all() {
   systemctl enable --now "${APP_SERVICE}"
   systemctl enable "${NEWT_SERVICE}"
   systemctl enable "${MQTT_SERVICE}"
+  systemctl enable "${CLOUD_SERVICE}"
   systemctl enable --now "${WATCHDOG_TIMER}"
   if is_newt_configured; then
     systemctl restart "${NEWT_SERVICE}" || true
@@ -129,6 +145,11 @@ enable_all() {
   else
     systemctl stop "${MQTT_SERVICE}" >/dev/null 2>&1 || true
   fi
+  if is_cloud_configured; then
+    systemctl restart "${CLOUD_SERVICE}" || true
+  else
+    systemctl stop "${CLOUD_SERVICE}" >/dev/null 2>&1 || true
+  fi
   echo "Attivazione completata."
   print_status
 }
@@ -136,12 +157,13 @@ enable_all() {
 disable_all() {
   systemctl disable --now "${WATCHDOG_TIMER}" >/dev/null 2>&1 || true
   systemctl stop "${WATCHDOG_SERVICE}" >/dev/null 2>&1 || true
+  systemctl disable --now "${CLOUD_SERVICE}" >/dev/null 2>&1 || true
   systemctl disable --now "${MQTT_SERVICE}" >/dev/null 2>&1 || true
   systemctl disable --now "${NEWT_SERVICE}" >/dev/null 2>&1 || true
   systemctl disable --now "${APP_SERVICE}" >/dev/null 2>&1 || true
   systemctl disable --now "${LEGACY_MQTT_SERVICE}" >/dev/null 2>&1 || true
   systemctl disable --now "${LEGACY_APP_SERVICE}" >/dev/null 2>&1 || true
-  echo "Disattivazione completata (app/newt/mqtt/watchdog)."
+  echo "Disattivazione completata (app/newt/mqtt/cloud/watchdog)."
   print_status
 }
 
@@ -153,8 +175,8 @@ Uso:
   sudo ./deploy/stack_control.sh status
 
 Comandi:
-  enable-all   Installa/aggiorna unit e script, abilita e avvia app + watchdog (+newt/mqtt se configurati)
-  disable-all  Disabilita e ferma in blocco app + newt + mqtt + watchdog
+  enable-all   Installa/aggiorna unit e script, abilita e avvia app + watchdog (+newt/mqtt/cloud se configurati)
+  disable-all  Disabilita e ferma in blocco app + newt + mqtt + cloud + watchdog
   status       Mostra stato attuale dei servizi
 EOF
 }

@@ -6,17 +6,20 @@ APP_USER="${APP_USER:-sheltr}"
 APP_GROUP="${APP_GROUP:-$APP_USER}"
 APP_SERVICE_NAME="${APP_NAME}.service"
 MQTT_SERVICE_NAME="${APP_NAME}-mqtt.service"
+CLOUD_SERVICE_NAME="${APP_NAME}-cloud.service"
 LEGACY_APP_NAME="algodomoiot"
 INSTALL_DIR="/opt/${APP_NAME}"
 CONFIG_DIR="/etc/${APP_NAME}"
 SERVICE_FILE="/etc/systemd/system/${APP_SERVICE_NAME}"
 NEWT_SERVICE_FILE="/etc/systemd/system/newt.service"
 MQTT_SERVICE_FILE="/etc/systemd/system/${MQTT_SERVICE_NAME}"
+CLOUD_SERVICE_FILE="/etc/systemd/system/${CLOUD_SERVICE_NAME}"
 NEWT_WATCHDOG_SERVICE_FILE="/etc/systemd/system/newt-watchdog.service"
 NEWT_WATCHDOG_TIMER_FILE="/etc/systemd/system/newt-watchdog.timer"
 ENV_FILE="/etc/default/${APP_NAME}"
 NEWT_ENV_FILE="${CONFIG_DIR}/newt.env"
 MQTT_ENV_FILE="${CONFIG_DIR}/mqtt.env"
+CLOUD_ENV_FILE="${CONFIG_DIR}/cloud.env"
 ADMIN_DIR="/usr/local/lib/sheltr-admin"
 NEWT_WATCHDOG_SCRIPT="${ADMIN_DIR}/newt_watchdog.sh"
 RTC_CONTROL_SCRIPT="${ADMIN_DIR}/rtc_control.sh"
@@ -201,9 +204,14 @@ if [[ ! -f "${MQTT_ENV_FILE}" ]]; then
   cp "${INSTALL_DIR}/deploy/mqtt.env" "${MQTT_ENV_FILE}"
 fi
 
+if [[ ! -f "${CLOUD_ENV_FILE}" ]]; then
+  cp "${INSTALL_DIR}/deploy/cloud.env" "${CLOUD_ENV_FILE}"
+fi
+
 install -m 644 "${INSTALL_DIR}/deploy/sheltr.service" "${SERVICE_FILE}"
 install -m 644 "${INSTALL_DIR}/deploy/newt.service" "${NEWT_SERVICE_FILE}"
 install -m 644 "${INSTALL_DIR}/deploy/sheltr-mqtt.service" "${MQTT_SERVICE_FILE}"
+install -m 644 "${INSTALL_DIR}/deploy/sheltr-cloud.service" "${CLOUD_SERVICE_FILE}"
 install -m 644 "${INSTALL_DIR}/deploy/newt-watchdog.service" "${NEWT_WATCHDOG_SERVICE_FILE}"
 install -m 644 "${INSTALL_DIR}/deploy/newt-watchdog.timer" "${NEWT_WATCHDOG_TIMER_FILE}"
 install -m 750 "${INSTALL_DIR}/deploy/admin_control.sh" "${ADMIN_DIR}/admin_control.sh"
@@ -223,9 +231,10 @@ chmod 750 "${ADMIN_DIR}/admin_control.sh" "${ADMIN_DIR}/apply_network.sh" "${NEW
 chmod 440 "${SUDOERS_FILE}"
 chmod 750 "${INSTALL_DIR}" "${CONFIG_DIR}"
 chmod 640 "${CONFIG_DIR}/config.json" "${CONFIG_DIR}/state.json"
-chmod 644 "${ENV_FILE}" "${SERVICE_FILE}" "${NEWT_SERVICE_FILE}" "${MQTT_SERVICE_FILE}" "${NEWT_WATCHDOG_SERVICE_FILE}" "${NEWT_WATCHDOG_TIMER_FILE}"
+chmod 644 "${ENV_FILE}" "${SERVICE_FILE}" "${NEWT_SERVICE_FILE}" "${MQTT_SERVICE_FILE}" "${CLOUD_SERVICE_FILE}" "${NEWT_WATCHDOG_SERVICE_FILE}" "${NEWT_WATCHDOG_TIMER_FILE}"
 chmod 640 "${NEWT_ENV_FILE}"
 chmod 640 "${MQTT_ENV_FILE}"
+chmod 640 "${CLOUD_ENV_FILE}"
 
 if command -v visudo >/dev/null 2>&1; then
   visudo -cf "${SUDOERS_FILE}"
@@ -240,6 +249,7 @@ systemctl daemon-reload
 systemctl enable --now "${APP_SERVICE_NAME}"
 systemctl enable newt.service
 systemctl enable "${MQTT_SERVICE_NAME}"
+systemctl enable "${CLOUD_SERVICE_NAME}"
 systemctl enable --now newt-watchdog.timer
 systemctl restart "${APP_SERVICE_NAME}"
 
@@ -261,12 +271,23 @@ else
   systemctl stop "${MQTT_SERVICE_NAME}" >/dev/null 2>&1 || true
 fi
 
+if grep -q '^CLOUD_MQTT_ENABLED=1' "${CLOUD_ENV_FILE}" \
+  && grep -q '^CLOUD_MQTT_HOST="[^"]\\+"' "${CLOUD_ENV_FILE}" \
+  && grep -q '^CLOUD_MQTT_BASE_TOPIC="[^"]\\+"' "${CLOUD_ENV_FILE}" \
+  && (grep -q '^SHELTR_TOKEN="[^"]\\+"' "${CLOUD_ENV_FILE}" || grep -q '^ALGODOMO_TOKEN="[^"]\\+"' "${CLOUD_ENV_FILE}"); then
+  systemctl restart "${CLOUD_SERVICE_NAME}" || true
+else
+  systemctl stop "${CLOUD_SERVICE_NAME}" >/dev/null 2>&1 || true
+fi
+
 echo
 systemctl --no-pager --full status "${APP_SERVICE_NAME}" || true
 echo
 systemctl --no-pager --full status newt.service || true
 echo
 systemctl --no-pager --full status "${MQTT_SERVICE_NAME}" || true
+echo
+systemctl --no-pager --full status "${CLOUD_SERVICE_NAME}" || true
 echo
 systemctl --no-pager --full status newt-watchdog.timer || true
 
@@ -276,6 +297,7 @@ echo "Config: ${CONFIG_DIR}/config.json"
 echo "Override env: ${ENV_FILE}"
 echo "Config newt: ${NEWT_ENV_FILE}"
 echo "Config mqtt: ${MQTT_ENV_FILE}"
+echo "Config cloud: ${CLOUD_ENV_FILE}"
 echo "Pagine: http://<IP_RASPBERRY>/ (control) e /config"
 echo "Gestione rapida: sudo sheltr-stack enable-all | disable-all | status"
 

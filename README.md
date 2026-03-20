@@ -10,6 +10,7 @@ Applicazione Python leggera con:
 - client MQTT verso Home Assistant (configurabile da UI + service systemd)
 - integrazione RTC I2C per l'ora di sistema (configurabile da UI)
 - gestione rete Raspberry (wifi/ethernet da UI)
+- secondo client MQTT remoto per Sheltr Cloud (configurabile da UI + service systemd dedicato)
 
 Tutti i dati vengono salvati in JSON locale.
 
@@ -24,9 +25,10 @@ Da `/config` ora puoi programmare tutto senza editare JSON manualmente:
 - nome e stanza di ogni canale
 - parametri `newt` (`enabled`, `id`, `secret`, `endpoint`)
 - parametri `mqtt` (`enabled`, broker, topic, discovery, polling, auth)
+- parametri `cloud` (`enabled`, broker remoto, topic, polling, auth)
 - parametri `rtc` (`enabled`, `model`, `bus`, `address`)
 - rete Raspberry (`mode` ethernet/wifi + credenziali wifi)
-- pulsanti di manutenzione: restart servizio, restart newt, restart mqtt, applica rete
+- pulsanti di manutenzione: restart servizio, restart newt, restart mqtt, restart cloud, applica rete
 
 ## Formato configurazione (salvato in JSON)
 
@@ -94,7 +96,7 @@ Server default: `http://localhost`
 - Info sistema:
   - `GET /api/system/info?token=...`
 - Admin:
-  - `GET /api/admin/restart?token=...&service=app|newt|mqtt`
+  - `GET /api/admin/restart?token=...&service=app|newt|mqtt|cloud|all`
   - `GET /api/admin/apply-network?token=...`
   - `GET /api/admin/apply-rtc?token=...`
   - `GET /api/admin/sync-rtc?token=...&mode=from-rtc|to-rtc`
@@ -106,9 +108,11 @@ File inclusi:
 - service: `deploy/sheltr.service`
 - service newt: `deploy/newt.service`
 - service mqtt: `deploy/sheltr-mqtt.service`
+- service cloud: `deploy/sheltr-cloud.service`
 - env: `deploy/sheltr.env`
 - env newt: `deploy/newt.env`
 - env mqtt: `deploy/mqtt.env`
+- env cloud: `deploy/cloud.env`
 - installer: `install_raspberry.sh`
 
 Installazione:
@@ -125,6 +129,7 @@ L'installer:
 - abilita/avvia `sheltr.service`
 - installa/abilita `newt.service` (avvio effettivo quando `NEWT_ENABLED=1` e credenziali presenti)
 - installa/abilita `sheltr-mqtt.service` (avvio effettivo quando `MQTT_ENABLED=1` e parametri validi)
+- installa/abilita `sheltr-cloud.service` (avvio effettivo quando `CLOUD_MQTT_ENABLED=1` e parametri validi)
 - installa strumenti I2C (`i2c-tools`), `hwclock` (`util-linux-extra`/`util-linux`) e script amministrativo RTC
 - aggiunge utente servizio al gruppo `dialout` (se presente)
 - disabilita e mette in `mask` `serial-getty@ttyS0.service` e `serial-getty@serial0.service`

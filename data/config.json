@@ -26,6 +26,19 @@
     "qos": 0,
     "retain": true
   },
+  "cloud": {
+    "enabled": false,
+    "host": "",
+    "port": 1883,
+    "username": "",
+    "password": "",
+    "clientId": "sheltr-cloud",
+    "baseTopic": "sheltr-cloud",
+    "keepalive": 60,
+    "pollIntervalSec": 30,
+    "qos": 0,
+    "retain": true
+  },
   "rtc": {
     "enabled": false,
     "model": "ds3231",

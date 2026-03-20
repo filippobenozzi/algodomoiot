@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sheltr MQTT bridge for Home Assistant (no rooms, channel names as CHx)."""
+"""Sheltr MQTT bridge for Home Assistant or Sheltr Cloud."""
 
 from __future__ import annotations
 
@@ -21,9 +21,6 @@ except Exception as exc:  # noqa: BLE001
     MQTT_IMPORT_ERROR = exc
 else:
     MQTT_IMPORT_ERROR = None
-
-LOGGER = logging.getLogger("sheltr-mqtt")
-
 
 def bool_env(name: str, default: bool = False) -> bool:
     value = str(os.environ.get(name, "1" if default else "0")).strip().lower()
@@ -57,6 +54,44 @@ def text_env_any(names: tuple[str, ...], default: str = "") -> str:
         if value:
             return value
     return default
+
+
+def prefixed_env_name(prefix: str, name: str) -> str:
+    normalized = str(prefix or "").strip().upper() or "MQTT"
+    return f"{normalized}_{name}"
+
+
+def bool_env_prefixed(prefix: str, name: str, default: bool = False) -> bool:
+    return bool_env(prefixed_env_name(prefix, name), default)
+
+
+def int_env_prefixed(prefix: str, name: str, default: int, min_value: int, max_value: int) -> int:
+    return int_env(prefixed_env_name(prefix, name), default, min_value, max_value)
+
+
+def text_env_prefixed(prefix: str, name: str, default: str = "") -> str:
+    return text_env(prefixed_env_name(prefix, name), default)
+
+
+def default_bridge_label(prefix: str) -> str:
+    return "Sheltr MQTT" if str(prefix or "").strip().upper() == "MQTT" else "Sheltr Cloud"
+
+
+def default_client_id(prefix: str) -> str:
+    return "sheltr" if str(prefix or "").strip().upper() == "MQTT" else "sheltr-cloud"
+
+
+def default_base_topic(prefix: str) -> str:
+    return "sheltr" if str(prefix or "").strip().upper() == "MQTT" else "sheltr-cloud"
+
+
+def logger_name_for_bridge() -> str:
+    prefix = str(os.environ.get("SHELTR_MQTT_PREFIX", "MQTT")).strip().upper() or "MQTT"
+    fallback = "sheltr-mqtt" if prefix == "MQTT" else "sheltr-cloud"
+    return text_env("SHELTR_MQTT_LOGGER", fallback)
+
+
+LOGGER = logging.getLogger(logger_name_for_bridge())
 
 
 def slugify(value: str) -> str:
@@ -96,18 +131,21 @@ def clamp(value: int, min_value: int, max_value: int) -> int:
 
 class SheltrMqttBridge:
     def __init__(self) -> None:
-        self.enabled = bool_env("MQTT_ENABLED", False)
-        self.host = text_env("MQTT_HOST", "127.0.0.1")
-        self.port = int_env("MQTT_PORT", 1883, 1, 65535)
-        self.username = text_env("MQTT_USERNAME", "")
-        self.password = text_env("MQTT_PASSWORD", "")
-        self.client_id = text_env("MQTT_CLIENT_ID", "sheltr")
-        self.base_topic = text_env("MQTT_BASE_TOPIC", "sheltr").strip("/")
-        self.discovery_prefix = text_env("MQTT_DISCOVERY_PREFIX", "homeassistant").strip("/")
-        self.keepalive = int_env("MQTT_KEEPALIVE", 60, 10, 86400)
-        self.poll_interval = int_env("MQTT_POLL_INTERVAL", 30, 2, 3600)
-        self.qos = int_env("MQTT_QOS", 0, 0, 2)
-        self.retain = bool_env("MQTT_RETAIN", True)
+        self.env_prefix = text_env("SHELTR_MQTT_PREFIX", "MQTT").strip().upper() or "MQTT"
+        self.enabled = bool_env_prefixed(self.env_prefix, "ENABLED", False)
+        self.host = text_env_prefixed(self.env_prefix, "HOST", "127.0.0.1")
+        self.port = int_env_prefixed(self.env_prefix, "PORT", 1883, 1, 65535)
+        self.username = text_env_prefixed(self.env_prefix, "USERNAME", "")
+        self.password = text_env_prefixed(self.env_prefix, "PASSWORD", "")
+        self.client_id = text_env_prefixed(self.env_prefix, "CLIENT_ID", default_client_id(self.env_prefix))
+        self.base_topic = text_env_prefixed(self.env_prefix, "BASE_TOPIC", default_base_topic(self.env_prefix)).strip("/")
+        self.discovery_enabled = bool_env_prefixed(self.env_prefix, "DISCOVERY_ENABLED", self.env_prefix == "MQTT")
+        self.discovery_prefix = text_env_prefixed(self.env_prefix, "DISCOVERY_PREFIX", "homeassistant").strip("/")
+        self.bridge_name = text_env_prefixed(self.env_prefix, "BRIDGE_NAME", default_bridge_label(self.env_prefix))
+        self.keepalive = int_env_prefixed(self.env_prefix, "KEEPALIVE", 60, 10, 86400)
+        self.poll_interval = int_env_prefixed(self.env_prefix, "POLL_INTERVAL", 30, 2, 3600)
+        self.qos = int_env_prefixed(self.env_prefix, "QOS", 0, 0, 2)
+        self.retain = bool_env_prefixed(self.env_prefix, "RETAIN", True)
         self.http_base = text_env_any(("SHELTR_HTTP_BASE", "ALGODOMO_HTTP_BASE"), "http://127.0.0.1").rstrip("/")
         self.api_token = text_env_any(("SHELTR_TOKEN", "ALGODOMO_TOKEN"), "")
 
@@ -201,12 +239,12 @@ class SheltrMqttBridge:
             self._boards = boards
             self._boards_by_slug = by_slug
         if not boards:
-            LOGGER.warning("Nessuna scheda trovata in /api/config: discovery MQTT vuoto")
+            LOGGER.warning("%s: nessuna scheda trovata in /api/config", self.bridge_name)
         else:
             summary = ", ".join(f"{b['id']}:{b['kind']}({len(b['channels'])}ch)" for b in boards)
-            LOGGER.info("Schede MQTT caricate: %s", summary)
+            LOGGER.info("%s: schede caricate: %s", self.bridge_name, summary)
         if disabled_count > 0:
-            LOGGER.info("Schede escluse da MQTT (mqttPublish=0): %d", disabled_count)
+            LOGGER.info("%s: schede escluse (mqttPublish=0): %d", self.bridge_name, disabled_count)
 
     def _topic_prefix(self, board: dict[str, Any]) -> str:
         return f"{self.base_topic}/{board['slug']}"
@@ -238,13 +276,15 @@ class SheltrMqttBridge:
 
     def _bridge_device_payload(self) -> dict[str, Any]:
         return {
-            "identifiers": ["sheltr_mqtt_bridge"],
-            "name": "Sheltr MQTT",
+            "identifiers": [f"sheltr_{slugify(self.bridge_name)}_bridge"],
+            "name": self.bridge_name,
             "manufacturer": "Sheltr",
             "model": "mqtt-bridge",
         }
 
     def _publish_discovery(self) -> None:
+        if not self.discovery_enabled:
+            return
         with self._lock:
             boards = list(self._boards)
         count = 0
@@ -382,7 +422,7 @@ class SheltrMqttBridge:
                 retain=True,
             )
             count += 1
-        LOGGER.info("Discovery MQTT pubblicato: %d entita", count)
+        LOGGER.info("%s: discovery Home Assistant pubblicata: %d entita", self.bridge_name, count)
 
     def _publish_board_states(self, board_state: dict[str, Any], failed_addresses: set[int]) -> None:
         board_id = str(board_state.get("id", "")).strip()
@@ -465,9 +505,9 @@ class SheltrMqttBridge:
         if rc != 0 and str(reason_code).strip().lower() in {"success", "0"}:
             rc = 0
         if rc != 0:
-            LOGGER.error("Connessione MQTT fallita: rc=%s", rc)
+            LOGGER.error("%s: connessione MQTT fallita: rc=%s", self.bridge_name, rc)
             return
-        LOGGER.info("MQTT connesso a %s:%d", self.host, self.port)
+        LOGGER.info("%s connesso a %s:%d", self.bridge_name, self.host, self.port)
         self._publish(self._bridge_status_topic(), "online", retain=True)
         # MQTT wildcard '+' deve occupare un livello intero (non "ch+").
         # Pattern validi:
@@ -486,7 +526,7 @@ class SheltrMqttBridge:
         self.publish_status(refresh=True)
 
     def _on_disconnect(self, client, userdata, reason_code, properties=None):  # noqa: ANN001
-        LOGGER.warning("MQTT disconnesso: rc=%s", reason_code)
+        LOGGER.warning("%s disconnesso: rc=%s", self.bridge_name, reason_code)
 
     def _send_command(self, board: dict[str, Any], channel: int, tail: str, payload: str) -> None:
         entity_id = f"{board['id']}-c{channel}"
@@ -588,7 +628,7 @@ class SheltrMqttBridge:
             self._send_command(board, channel, cmd_tail, payload)
             self.publish_status(refresh=False)
         except Exception as exc:
-            LOGGER.warning("Comando MQTT fallito topic=%s: %s", topic, exc)
+            LOGGER.warning("%s: comando MQTT fallito topic=%s: %s", self.bridge_name, topic, exc)
 
     def _poll_loop(self) -> None:
         while not self._stop.wait(self.poll_interval):
@@ -596,7 +636,7 @@ class SheltrMqttBridge:
 
     def run(self) -> int:
         if not self.enabled:
-            LOGGER.info("MQTT disabilitato (MQTT_ENABLED=0)")
+            LOGGER.info("%s disabilitato (%s_ENABLED=0)", self.bridge_name, self.env_prefix)
             return 0
         if not self.api_token:
             LOGGER.error("Token API mancante (SHELTR_TOKEN o ALGODOMO_TOKEN)")
@@ -624,7 +664,7 @@ def main() -> int:
     bridge = SheltrMqttBridge()
 
     def _stop_handler(signum, frame):  # noqa: ANN001
-        LOGGER.info("Ricevuto segnale %s, stop MQTT bridge", signum)
+        LOGGER.info("Ricevuto segnale %s, stop %s", signum, bridge.bridge_name)
         bridge.stop()
 
     signal.signal(signal.SIGTERM, _stop_handler)

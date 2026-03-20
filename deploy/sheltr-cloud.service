@@ -1,0 +1,20 @@
+[Unit]
+Description=Sheltr Cloud MQTT Bridge
+After=network-online.target sheltr.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sheltr
+Group=sheltr
+WorkingDirectory=/opt/sheltr
+Environment=SHELTR_MQTT_PREFIX=CLOUD_MQTT
+Environment=SHELTR_MQTT_LOGGER=sheltr-cloud
+EnvironmentFile=-/etc/sheltr/cloud.env
+ExecCondition=/bin/sh -c '[ "${CLOUD_MQTT_ENABLED:-0}" = "1" ] && [ -n "${CLOUD_MQTT_HOST:-}" ] && [ -n "${CLOUD_MQTT_BASE_TOPIC:-}" ] && { [ -n "${SHELTR_TOKEN:-}" ] || [ -n "${ALGODOMO_TOKEN:-}" ]; }'
+ExecStart=/usr/bin/python3 /opt/sheltr/mqtt_client.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -126,6 +126,7 @@ CONFIG_PATH = Path(env_first("SHELTR_CONFIG", "ALGODOMO_CONFIG", default=str(DEF
 STATE_PATH = Path(env_first("SHELTR_STATE", "ALGODOMO_STATE", default=str(DEFAULT_STATE_PATH)))
 NEWT_ENV_PATH = Path(env_first("SHELTR_NEWT_ENV", "ALGODOMO_NEWT_ENV", default="/etc/sheltr/newt.env"))
 MQTT_ENV_PATH = Path(env_first("SHELTR_MQTT_ENV", "ALGODOMO_MQTT_ENV", default="/etc/sheltr/mqtt.env"))
+CLOUD_ENV_PATH = Path(env_first("SHELTR_CLOUD_ENV", "ALGODOMO_CLOUD_ENV", default="/etc/sheltr/cloud.env"))
 ADMIN_CONTROL_SCRIPT = env_first(
     "SHELTR_ADMIN_SCRIPT",
     "ALGODOMO_ADMIN_SCRIPT",
@@ -394,6 +395,19 @@ def default_config() -> dict[str, Any]:
             "qos": 0,
             "retain": True,
         },
+        "cloud": {
+            "enabled": False,
+            "host": "",
+            "port": 1883,
+            "username": "",
+            "password": "",
+            "clientId": "sheltr-cloud",
+            "baseTopic": "sheltr-cloud",
+            "keepalive": 60,
+            "pollIntervalSec": 30,
+            "qos": 0,
+            "retain": True,
+        },
         "rtc": {
             "enabled": False,
             "model": "ds3231",
@@ -477,6 +491,8 @@ def bootstrap() -> None:
         sync_newt_runtime_state(cfg)
         sync_mqtt_env(cfg)
         sync_mqtt_runtime_state(cfg)
+        sync_cloud_env(cfg)
+        sync_cloud_runtime_state(cfg)
         sync_rtc_runtime_state(cfg, cfg)
     except Exception as exc:  # noqa: BLE001
         print("[warn] impossibile inizializzare runtime esterni:", exc)
@@ -499,6 +515,8 @@ def set_config(new_config: dict[str, Any]) -> dict[str, Any]:
         sync_newt_runtime_state(normalized, previous)
         sync_mqtt_env(normalized)
         sync_mqtt_runtime_state(normalized, previous)
+        sync_cloud_env(normalized)
+        sync_cloud_runtime_state(normalized, previous)
         sync_rtc_runtime_state(normalized, previous)
     except Exception as exc:  # noqa: BLE001
         print("[warn] impossibile aggiornare runtime esterni:", exc)
@@ -610,6 +628,25 @@ def normalize_id(value: Any, fallback: str) -> str:
     return out or fallback
 
 
+def normalize_bridge_config(raw_cfg: dict[str, Any], defaults: dict[str, Any], *, with_discovery: bool) -> dict[str, Any]:
+    payload = {
+        "enabled": bool_value(raw_cfg.get("enabled")),
+        "host": normalize_text(raw_cfg.get("host"), defaults["host"]),
+        "port": to_port(raw_cfg.get("port"), defaults["port"]),
+        "username": normalize_text(raw_cfg.get("username"), ""),
+        "password": normalize_text(raw_cfg.get("password"), ""),
+        "clientId": normalize_text(raw_cfg.get("clientId"), defaults["clientId"]),
+        "baseTopic": normalize_topic(raw_cfg.get("baseTopic"), defaults["baseTopic"]),
+        "keepalive": clamp_int(to_number(raw_cfg.get("keepalive"), defaults["keepalive"]), 10, 86400),
+        "pollIntervalSec": clamp_int(to_number(raw_cfg.get("pollIntervalSec"), defaults["pollIntervalSec"]), 2, 3600),
+        "qos": clamp_int(to_number(raw_cfg.get("qos"), defaults["qos"]), 0, 2),
+        "retain": bool_value(raw_cfg.get("retain")),
+    }
+    if with_discovery:
+        payload["discoveryPrefix"] = normalize_topic(raw_cfg.get("discoveryPrefix"), defaults["discoveryPrefix"])
+    return payload
+
+
 def as_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
@@ -685,6 +722,7 @@ def normalize_config(raw: Any) -> dict[str, Any]:
     serial_raw = as_dict(raw.get("serial"))
     newt_raw = as_dict(raw.get("newt"))
     mqtt_raw = as_dict(raw.get("mqtt"))
+    cloud_raw = as_dict(raw.get("cloud"))
     rtc_raw = as_dict(raw.get("rtc"))
     network_raw = as_dict(raw.get("network"))
     ip_raw = as_dict(network_raw.get("ip"))
@@ -712,22 +750,8 @@ def normalize_config(raw: Any) -> dict[str, Any]:
             "secret": normalize_text(newt_raw.get("secret"), ""),
             "endpoint": normalize_text(newt_raw.get("endpoint"), defaults["newt"]["endpoint"]),
         },
-        "mqtt": {
-            "enabled": bool_value(mqtt_raw.get("enabled")),
-            "host": normalize_text(mqtt_raw.get("host"), defaults["mqtt"]["host"]),
-            "port": to_port(mqtt_raw.get("port"), defaults["mqtt"]["port"]),
-            "username": normalize_text(mqtt_raw.get("username"), ""),
-            "password": normalize_text(mqtt_raw.get("password"), ""),
-            "clientId": normalize_text(mqtt_raw.get("clientId"), defaults["mqtt"]["clientId"]),
-            "baseTopic": normalize_topic(mqtt_raw.get("baseTopic"), defaults["mqtt"]["baseTopic"]),
-            "discoveryPrefix": normalize_topic(mqtt_raw.get("discoveryPrefix"), defaults["mqtt"]["discoveryPrefix"]),
-            "keepalive": clamp_int(to_number(mqtt_raw.get("keepalive"), defaults["mqtt"]["keepalive"]), 10, 86400),
-            "pollIntervalSec": clamp_int(
-                to_number(mqtt_raw.get("pollIntervalSec"), defaults["mqtt"]["pollIntervalSec"]), 2, 3600
-            ),
-            "qos": clamp_int(to_number(mqtt_raw.get("qos"), defaults["mqtt"]["qos"]), 0, 2),
-            "retain": bool_value(mqtt_raw.get("retain")),
-        },
+        "mqtt": normalize_bridge_config(mqtt_raw, defaults["mqtt"], with_discovery=True),
+        "cloud": normalize_bridge_config(cloud_raw, defaults["cloud"], with_discovery=False),
         "rtc": {
             "enabled": bool_value(rtc_raw.get("enabled")),
             "model": normalize_rtc_model(rtc_raw.get("model"), defaults["rtc"]["model"]),
@@ -768,6 +792,74 @@ def normalize_state(raw: Any) -> dict[str, Any]:
 
 def env_escape(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def bridge_env_lines(
+    prefix: str,
+    bridge_cfg: dict[str, Any],
+    api_token: str,
+    *,
+    bridge_name: str,
+    discovery_enabled: bool,
+    discovery_prefix: str = "",
+) -> list[str]:
+    host = normalize_text(bridge_cfg.get("host"), "")
+    port = to_port(bridge_cfg.get("port"), 1883)
+    username = normalize_text(bridge_cfg.get("username"), "")
+    password = normalize_text(bridge_cfg.get("password"), "")
+    client_id = normalize_text(bridge_cfg.get("clientId"), "sheltr")
+    base_topic = normalize_topic(bridge_cfg.get("baseTopic"), "sheltr")
+    keepalive = clamp_int(to_number(bridge_cfg.get("keepalive"), 60), 10, 86400)
+    poll_interval = clamp_int(to_number(bridge_cfg.get("pollIntervalSec"), 30), 2, 3600)
+    qos = clamp_int(to_number(bridge_cfg.get("qos"), 0), 0, 2)
+    retain = "1" if bool_value(bridge_cfg.get("retain")) else "0"
+    lines = [
+        "# File auto-generato da Sheltr. Modificare da /config",
+        f'{prefix}_ENABLED={"1" if bool_value(bridge_cfg.get("enabled")) else "0"}',
+        f'{prefix}_HOST="{env_escape(host)}"',
+        f"{prefix}_PORT={port}",
+        f'{prefix}_USERNAME="{env_escape(username)}"',
+        f'{prefix}_PASSWORD="{env_escape(password)}"',
+        f'{prefix}_CLIENT_ID="{env_escape(client_id)}"',
+        f'{prefix}_BASE_TOPIC="{env_escape(base_topic)}"',
+        f"{prefix}_KEEPALIVE={keepalive}",
+        f"{prefix}_POLL_INTERVAL={poll_interval}",
+        f"{prefix}_QOS={qos}",
+        f"{prefix}_RETAIN={retain}",
+        f'{prefix}_BRIDGE_NAME="{env_escape(bridge_name)}"',
+        f'{prefix}_DISCOVERY_ENABLED={"1" if discovery_enabled else "0"}',
+        'SHELTR_HTTP_BASE="http://127.0.0.1"',
+        'ALGODOMO_HTTP_BASE="http://127.0.0.1"',
+        f'SHELTR_TOKEN="{env_escape(api_token)}"',
+        f'ALGODOMO_TOKEN="{env_escape(api_token)}"',
+    ]
+    if discovery_enabled:
+        lines.insert(8, f'{prefix}_DISCOVERY_PREFIX="{env_escape(normalize_topic(discovery_prefix, "homeassistant"))}"')
+    return lines
+
+
+def bridge_runtime_payload(cfg: dict[str, Any], key: str, *, with_discovery: bool) -> dict[str, Any]:
+    bridge_cfg = as_dict(cfg.get(key))
+    boards = as_list(cfg.get("boards"))
+    boards_hash = hashlib.sha1(json.dumps(boards, sort_keys=True, ensure_ascii=True).encode("utf-8")).hexdigest()
+    payload = {
+        "enabled": bool_value(bridge_cfg.get("enabled")),
+        "host": normalize_text(bridge_cfg.get("host"), ""),
+        "port": to_port(bridge_cfg.get("port"), 1883),
+        "username": normalize_text(bridge_cfg.get("username"), ""),
+        "password": normalize_text(bridge_cfg.get("password"), ""),
+        "clientId": normalize_text(bridge_cfg.get("clientId"), ""),
+        "baseTopic": normalize_topic(bridge_cfg.get("baseTopic"), "sheltr"),
+        "keepalive": clamp_int(to_number(bridge_cfg.get("keepalive"), 60), 10, 86400),
+        "pollIntervalSec": clamp_int(to_number(bridge_cfg.get("pollIntervalSec"), 30), 2, 3600),
+        "qos": clamp_int(to_number(bridge_cfg.get("qos"), 0), 0, 2),
+        "retain": bool_value(bridge_cfg.get("retain")),
+        "apiToken": normalize_text(cfg.get("apiToken"), ""),
+        "boardsHash": boards_hash,
+    }
+    if with_discovery:
+        payload["discoveryPrefix"] = normalize_topic(bridge_cfg.get("discoveryPrefix"), "homeassistant")
+    return payload
 
 
 def sync_newt_env(cfg: dict[str, Any]) -> None:
@@ -825,60 +917,20 @@ def sync_newt_runtime_state(current_cfg: dict[str, Any], previous_cfg: dict[str,
 
 def sync_mqtt_env(cfg: dict[str, Any]) -> None:
     mqtt_cfg = as_dict(cfg.get("mqtt"))
-    host = normalize_text(mqtt_cfg.get("host"), "127.0.0.1")
-    port = to_port(mqtt_cfg.get("port"), 1883)
-    username = normalize_text(mqtt_cfg.get("username"), "")
-    password = normalize_text(mqtt_cfg.get("password"), "")
-    client_id = normalize_text(mqtt_cfg.get("clientId"), "sheltr")
-    base_topic = normalize_topic(mqtt_cfg.get("baseTopic"), "sheltr")
-    discovery_prefix = normalize_topic(mqtt_cfg.get("discoveryPrefix"), "homeassistant")
-    keepalive = clamp_int(to_number(mqtt_cfg.get("keepalive"), 60), 10, 86400)
-    poll_interval = clamp_int(to_number(mqtt_cfg.get("pollIntervalSec"), 30), 2, 3600)
-    qos = clamp_int(to_number(mqtt_cfg.get("qos"), 0), 0, 2)
-    retain = "1" if bool_value(mqtt_cfg.get("retain")) else "0"
     token = normalize_text(cfg.get("apiToken"), "")
-    lines = [
-        "# File auto-generato da Sheltr. Modificare da /config",
-        f'MQTT_ENABLED={"1" if bool_value(mqtt_cfg.get("enabled")) else "0"}',
-        f'MQTT_HOST="{env_escape(host)}"',
-        f"MQTT_PORT={port}",
-        f'MQTT_USERNAME="{env_escape(username)}"',
-        f'MQTT_PASSWORD="{env_escape(password)}"',
-        f'MQTT_CLIENT_ID="{env_escape(client_id)}"',
-        f'MQTT_BASE_TOPIC="{env_escape(base_topic)}"',
-        f'MQTT_DISCOVERY_PREFIX="{env_escape(discovery_prefix)}"',
-        f"MQTT_KEEPALIVE={keepalive}",
-        f"MQTT_POLL_INTERVAL={poll_interval}",
-        f"MQTT_QOS={qos}",
-        f"MQTT_RETAIN={retain}",
-        'SHELTR_HTTP_BASE="http://127.0.0.1"',
-        'ALGODOMO_HTTP_BASE="http://127.0.0.1"',
-        f'SHELTR_TOKEN="{env_escape(token)}"',
-        f'ALGODOMO_TOKEN="{env_escape(token)}"',
-    ]
+    lines = bridge_env_lines(
+        "MQTT",
+        mqtt_cfg,
+        token,
+        bridge_name="Sheltr MQTT",
+        discovery_enabled=True,
+        discovery_prefix=normalize_topic(mqtt_cfg.get("discoveryPrefix"), "homeassistant"),
+    )
     write_text_atomic(MQTT_ENV_PATH, "\n".join(lines) + "\n")
 
 
 def mqtt_runtime_payload(cfg: dict[str, Any]) -> dict[str, Any]:
-    mqtt_cfg = as_dict(cfg.get("mqtt"))
-    boards = as_list(cfg.get("boards"))
-    boards_hash = hashlib.sha1(json.dumps(boards, sort_keys=True, ensure_ascii=True).encode("utf-8")).hexdigest()
-    return {
-        "enabled": bool_value(mqtt_cfg.get("enabled")),
-        "host": normalize_text(mqtt_cfg.get("host"), ""),
-        "port": to_port(mqtt_cfg.get("port"), 1883),
-        "username": normalize_text(mqtt_cfg.get("username"), ""),
-        "password": normalize_text(mqtt_cfg.get("password"), ""),
-        "clientId": normalize_text(mqtt_cfg.get("clientId"), ""),
-        "baseTopic": normalize_topic(mqtt_cfg.get("baseTopic"), "sheltr"),
-        "discoveryPrefix": normalize_topic(mqtt_cfg.get("discoveryPrefix"), "homeassistant"),
-        "keepalive": clamp_int(to_number(mqtt_cfg.get("keepalive"), 60), 10, 86400),
-        "pollIntervalSec": clamp_int(to_number(mqtt_cfg.get("pollIntervalSec"), 30), 2, 3600),
-        "qos": clamp_int(to_number(mqtt_cfg.get("qos"), 0), 0, 2),
-        "retain": bool_value(mqtt_cfg.get("retain")),
-        "apiToken": normalize_text(cfg.get("apiToken"), ""),
-        "boardsHash": boards_hash,
-    }
+    return bridge_runtime_payload(cfg, "mqtt", with_discovery=True)
 
 
 def mqtt_should_run(cfg: dict[str, Any]) -> bool:
@@ -908,6 +960,52 @@ def sync_mqtt_runtime_state(current_cfg: dict[str, Any], previous_cfg: dict[str,
             run_admin_action("stop-mqtt")
         except Exception as exc:  # noqa: BLE001
             print("[warn] impossibile fermare mqtt:", exc)
+
+
+def sync_cloud_env(cfg: dict[str, Any]) -> None:
+    cloud_cfg = as_dict(cfg.get("cloud"))
+    token = normalize_text(cfg.get("apiToken"), "")
+    lines = bridge_env_lines(
+        "CLOUD_MQTT",
+        cloud_cfg,
+        token,
+        bridge_name="Sheltr Cloud",
+        discovery_enabled=False,
+    )
+    write_text_atomic(CLOUD_ENV_PATH, "\n".join(lines) + "\n")
+
+
+def cloud_runtime_payload(cfg: dict[str, Any]) -> dict[str, Any]:
+    return bridge_runtime_payload(cfg, "cloud", with_discovery=False)
+
+
+def cloud_should_run(cfg: dict[str, Any]) -> bool:
+    payload = cloud_runtime_payload(cfg)
+    return bool(payload["enabled"] and payload["host"] and payload["port"] and payload["baseTopic"] and payload["apiToken"])
+
+
+def sync_cloud_runtime_state(current_cfg: dict[str, Any], previous_cfg: dict[str, Any] | None = None) -> None:
+    should_run = cloud_should_run(current_cfg)
+    status = service_status("sheltr-cloud.service")
+    is_active = status in {"active", "activating", "reloading"}
+
+    cloud_changed = False
+    if previous_cfg is not None:
+        cloud_changed = cloud_runtime_payload(previous_cfg) != cloud_runtime_payload(current_cfg)
+
+    if should_run:
+        if cloud_changed or not is_active:
+            try:
+                run_admin_action("restart-cloud")
+            except Exception as exc:  # noqa: BLE001
+                print("[warn] impossibile riavviare cloud:", exc)
+        return
+
+    if is_active:
+        try:
+            run_admin_action("stop-cloud")
+        except Exception as exc:  # noqa: BLE001
+            print("[warn] impossibile fermare cloud:", exc)
 
 
 def rtc_runtime_payload(cfg: dict[str, Any]) -> dict[str, Any]:
@@ -1175,6 +1273,7 @@ def system_info() -> dict[str, Any]:
             "app": service_status("sheltr.service"),
             "newt": service_status("newt.service"),
             "mqtt": service_status("sheltr-mqtt.service"),
+            "cloud": service_status("sheltr-cloud.service"),
         },
     }
 
@@ -2395,6 +2494,7 @@ def api_system_info() -> dict[str, Any]:
         "networkConfig": as_dict(cfg.get("network")),
         "newtConfig": as_dict(cfg.get("newt")),
         "mqttConfig": as_dict(cfg.get("mqtt")),
+        "cloudConfig": as_dict(cfg.get("cloud")),
         "rtcConfig": as_dict(cfg.get("rtc")),
     }
 
@@ -2426,11 +2526,22 @@ def api_admin_restart(query: dict[str, list[str]]) -> dict[str, Any]:
             raise ValueError("mqtt non configurato: abilita MQTT e compila host/base topic/token in /config")
         action = "restart-mqtt"
         label = "sheltr-mqtt.service"
+    elif service in {"cloud", "sheltr-cloud", "sheltr-cloud.service"}:
+        cfg = get_config()
+        cloud_cfg = as_dict(cfg.get("cloud"))
+        enabled = bool_value(cloud_cfg.get("enabled"))
+        host = normalize_text(cloud_cfg.get("host"), "")
+        base_topic = normalize_topic(cloud_cfg.get("baseTopic"), "sheltr-cloud")
+        token = normalize_text(cfg.get("apiToken"), "")
+        if not enabled or not host or not base_topic or not token:
+            raise ValueError("cloud non configurato: abilita Sheltr Cloud e compila host/base topic/token in /config")
+        action = "restart-cloud"
+        label = "sheltr-cloud.service"
     elif service in {"all", "tutti", "stack"}:
         action = "restart-all"
-        label = "sheltr.service,newt.service,sheltr-mqtt.service"
+        label = "sheltr.service,newt.service,sheltr-mqtt.service,sheltr-cloud.service"
     else:
-        raise ValueError("service non valido: usa app, newt, mqtt o all")
+        raise ValueError("service non valido: usa app, newt, mqtt, cloud o all")
 
     run_admin_action(action)
     return {
