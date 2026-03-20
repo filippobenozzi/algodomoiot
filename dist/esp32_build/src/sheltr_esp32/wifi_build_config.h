@@ -1,0 +1,3 @@
+#pragma once
+#define SHELTR_WIFI_SSID "OWK-IoT"
+#define SHELTR_WIFI_PASS "PASSWORD_WIFI"

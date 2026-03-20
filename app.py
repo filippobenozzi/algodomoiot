@@ -8,6 +8,7 @@ import errno
 import hashlib
 import json
 import math
+import mimetypes
 import os
 import select
 import shutil
@@ -19,7 +20,7 @@ import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
 FRAME_START = 0x49
@@ -1261,15 +1262,35 @@ def build_frame(address: int, command: int, g_bytes: list[int]) -> bytes:
     return bytes(packet)
 
 
-def extract_first_frame(buffer: bytes) -> bytes | None:
+def extract_first_frame_info(buffer: bytes) -> tuple[int, bytes] | None:
     if len(buffer) < FRAME_LEN:
         return None
     for idx in range(0, len(buffer) - FRAME_LEN + 1):
         if buffer[idx] != FRAME_START:
             continue
         if buffer[idx + FRAME_LEN - 1] == FRAME_END:
-            return buffer[idx : idx + FRAME_LEN]
+            return idx, buffer[idx : idx + FRAME_LEN]
     return None
+
+
+def extract_first_frame(buffer: bytes) -> bytes | None:
+    match = extract_first_frame_info(buffer)
+    return match[1] if match is not None else None
+
+
+def extract_complete_frames(buffer: bytes) -> tuple[list[bytes], bytes]:
+    frames: list[bytes] = []
+    working = buffer
+    while True:
+        match = extract_first_frame_info(working)
+        if match is None:
+            break
+        idx, frame = match
+        frames.append(frame)
+        working = working[idx + FRAME_LEN :]
+    if len(working) > FRAME_LEN - 1:
+        working = working[-(FRAME_LEN - 1) :]
+    return frames, working
 
 
 def parse_frame(frame: bytes) -> dict[str, Any]:
@@ -1281,6 +1302,61 @@ def parse_frame(frame: bytes) -> dict[str, Any]:
         "end": frame[13],
         "hex": " ".join(to_hex(byte) for byte in frame),
     }
+
+
+def byte_options(value: int | list[int] | tuple[int, ...] | set[int]) -> list[int]:
+    if isinstance(value, (list, tuple, set)):
+        return sorted({to_byte(item, 0) for item in value})
+    return [to_byte(value, 0)]
+
+
+def frame_g_byte(frame: dict[str, Any], index: int) -> int:
+    g = frame.get("g")
+    if isinstance(g, list) and 0 <= index < len(g):
+        return to_byte(g[index], 0)
+    return 0
+
+
+def frame_matches(
+    frame: dict[str, Any],
+    *,
+    address: int | None = None,
+    commands: int | list[int] | tuple[int, ...] | set[int] | None = None,
+    g_expected: dict[int, int | list[int] | tuple[int, ...] | set[int]] | None = None,
+) -> bool:
+    if address is not None and to_address(frame.get("address"), -1) != to_address(address, -1):
+        return False
+    if commands is not None:
+        allowed_commands = set(byte_options(commands))
+        if to_byte(frame.get("command"), 0) not in allowed_commands:
+            return False
+    if g_expected:
+        for index, expected in g_expected.items():
+            if frame_g_byte(frame, index) not in set(byte_options(expected)):
+                return False
+    return True
+
+
+def describe_expected_frame(
+    *,
+    address: int | None = None,
+    commands: int | list[int] | tuple[int, ...] | set[int] | None = None,
+    g_expected: dict[int, int | list[int] | tuple[int, ...] | set[int]] | None = None,
+) -> str:
+    parts: list[str] = []
+    if address is not None:
+        parts.append(f"ADDR={to_hex(to_address(address, 0))}")
+    if commands is not None:
+        parts.append("CH=" + "/".join(to_hex(item) for item in byte_options(commands)))
+    if g_expected:
+        for index in sorted(g_expected):
+            values = "/".join(to_hex(item) for item in byte_options(g_expected[index]))
+            parts.append(f"G{index + 1}={values}")
+    return ", ".join(parts) if parts else "frame atteso"
+
+
+def describe_frame(frame: dict[str, Any]) -> str:
+    return normalize_text(frame.get("hex"), "frame vuoto")
 
 
 def configure_serial_port(fd: int, baudrate: int) -> None:
@@ -1332,7 +1408,14 @@ def serial_alias_for(port: str) -> str:
     return ""
 
 
-def send_raw(payload: bytes, expect_frame: bool = True, expected_bytes: int = 1) -> Any:
+def send_raw(
+    payload: bytes,
+    expect_frame: bool = True,
+    expected_bytes: int = 1,
+    frame_validator: Callable[[dict[str, Any]], bool] | None = None,
+    frame_expectation: str = "",
+    wait_response: bool = True,
+) -> Any:
     cfg = get_config()
     serial_cfg = cfg.get("serial", {})
     port = normalize_text(serial_cfg.get("port"), "/dev/ttyS0")
@@ -1341,6 +1424,7 @@ def send_raw(payload: bytes, expect_frame: bool = True, expected_bytes: int = 1)
 
     received = b""
     deadline = time.monotonic() + timeout_s
+    last_unexpected_frame: dict[str, Any] | None = None
 
     with SERIAL_LOCK:
         fd = -1
@@ -1377,6 +1461,8 @@ def send_raw(payload: bytes, expect_frame: bool = True, expected_bytes: int = 1)
             configure_serial_port(fd, baudrate)
             os.write(fd, payload)
             termios.tcdrain(fd)
+            if not wait_response:
+                return None
 
             while time.monotonic() < deadline:
                 remaining = max(0.0, deadline - time.monotonic())
@@ -1391,9 +1477,12 @@ def send_raw(payload: bytes, expect_frame: bool = True, expected_bytes: int = 1)
                 received += chunk
 
                 if expect_frame:
-                    frame = extract_first_frame(received)
-                    if frame is not None:
-                        return parse_frame(frame)
+                    frames, received = extract_complete_frames(received)
+                    for raw_frame in frames:
+                        frame = parse_frame(raw_frame)
+                        if frame_validator is None or frame_validator(frame):
+                            return frame
+                        last_unexpected_frame = frame
                 else:
                     min_bytes = max(1, int(expected_bytes))
                     if len(received) >= min_bytes:
@@ -1408,10 +1497,20 @@ def send_raw(payload: bytes, expect_frame: bool = True, expected_bytes: int = 1)
                 os.close(fd)
 
     if expect_frame:
-        frame = extract_first_frame(received)
-        if frame is not None:
-            return parse_frame(frame)
-        raise RuntimeError("Risposta protocollo non valida")
+        frames, received = extract_complete_frames(received)
+        for raw_frame in frames:
+            frame = parse_frame(raw_frame)
+            if frame_validator is None or frame_validator(frame):
+                return frame
+            last_unexpected_frame = frame
+        if last_unexpected_frame is not None:
+            expected = frame_expectation or "frame coerente"
+            raise RuntimeError(
+                f"Risposta protocollo inattesa: atteso {expected}, ricevuto {describe_frame(last_unexpected_frame)}"
+            )
+        if received:
+            raise RuntimeError("Risposta protocollo non valida")
+        raise RuntimeError("Nessuna risposta ricevuta")
 
     min_bytes = max(1, int(expected_bytes))
     if len(received) >= min_bytes:
@@ -1419,9 +1518,33 @@ def send_raw(payload: bytes, expect_frame: bool = True, expected_bytes: int = 1)
     raise RuntimeError("Nessuna risposta ricevuta")
 
 
-def send_frame(address: int, command: int, g_bytes: list[int]) -> dict[str, Any]:
+def send_frame(
+    address: int,
+    command: int,
+    g_bytes: list[int],
+    *,
+    expected_commands: int | list[int] | tuple[int, ...] | set[int] | None = None,
+    expected_g: dict[int, int | list[int] | tuple[int, ...] | set[int]] | None = None,
+    wait_response: bool = True,
+) -> dict[str, Any] | None:
     packet = build_frame(address, command, g_bytes)
-    result = send_raw(packet, expect_frame=True)
+    if not wait_response:
+        send_raw(packet, expect_frame=False, wait_response=False)
+        return None
+
+    commands = command if expected_commands is None else expected_commands
+    expectation = describe_expected_frame(address=address, commands=commands, g_expected=expected_g)
+    result = send_raw(
+        packet,
+        expect_frame=True,
+        frame_validator=lambda frame: frame_matches(
+            frame,
+            address=address,
+            commands=commands,
+            g_expected=expected_g,
+        ),
+        frame_expectation=expectation,
+    )
     assert isinstance(result, dict)
     return result
 
@@ -1450,6 +1573,7 @@ def decode_polling_frame(frame: dict[str, Any]) -> dict[str, Any]:
 
 def poll_board(address: int) -> dict[str, Any]:
     frame = send_frame(address, 0x40, [])
+    assert isinstance(frame, dict)
     poll = decode_polling_frame(frame)
     now = int(time.time() * 1000)
 
@@ -1464,6 +1588,20 @@ def poll_board(address: int) -> dict[str, Any]:
 
     update_state(mutator)
     return poll
+
+
+def poll_board_with_retry(address: int, attempts: int = 2, delay_s: float = 0.12) -> tuple[dict[str, Any] | None, str | None]:
+    tries = max(1, int(attempts))
+    last_error: Exception | None = None
+    for attempt in range(tries):
+        try:
+            return poll_board(address), None
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            if attempt + 1 < tries:
+                time.sleep(delay_s)
+    error = normalize_text(str(last_error), "Errore polling") if last_error is not None else None
+    return None, error
 
 
 def split_temperature(value: float) -> tuple[int, int]:
@@ -1933,18 +2071,26 @@ def api_light(query: dict[str, list[str]]) -> dict[str, Any]:
     if relay_cmd is None:
         raise ValueError("channel non valido per luce")
 
-    frame = send_frame(entity["address"], relay_cmd, [code])
-
-    poll = None
-    try:
-        poll = poll_board(entity["address"])
-    except Exception:
-        poll = None
-
     snapshot = get_state()
     prev = snapshot.get("lights", {}).get(entity["id"], {})
     fallback = prev.get("isOn") if isinstance(prev, dict) else None
+
+    if action == "toggle_no_ack":
+        frame = send_frame(entity["address"], relay_cmd, [code], wait_response=False)
+        time.sleep(0.08)
+    else:
+        frame = send_frame(entity["address"], relay_cmd, [code], expected_g={0: code})
+
+    poll, poll_error = poll_board_with_retry(entity["address"], attempts=1)
+
     is_on = infer_light_state(entity["channel"], poll, fallback, action)
+
+    if action == "toggle_no_ack" and not isinstance(poll, dict):
+        detail = f": {poll_error}" if poll_error else ""
+        raise RuntimeError(f"toggle_no_ack inviato ma non verificabile via polling 0x40{detail}")
+    if action == "toggle_no_ack" and isinstance(fallback, bool) and isinstance(is_on, bool) and is_on == fallback:
+        raise RuntimeError("toggle_no_ack inviato ma stato uscita invariato al polling 0x40")
+
     now = int(time.time() * 1000)
 
     def mutator(state: dict[str, Any]) -> None:
@@ -1953,7 +2099,17 @@ def api_light(query: dict[str, list[str]]) -> dict[str, Any]:
 
     update_state(mutator)
 
-    return {"ok": True, "entity": entity, "action": action, "frame": frame}
+    return {
+        "ok": True,
+        "entity": entity,
+        "action": action,
+        "frame": frame,
+        "verification": {
+            "acknowledged": isinstance(frame, dict),
+            "pollVerified": isinstance(poll, dict),
+            "pollError": poll_error,
+        },
+    }
 
 
 def api_dimmer(query: dict[str, list[str]]) -> dict[str, Any]:
@@ -1973,11 +2129,20 @@ def api_dimmer(query: dict[str, list[str]]) -> dict[str, Any]:
 
     snapshot = get_state()
     prev = snapshot.get("dimmers", {}).get(entity["id"], {})
+    poll_before = None
+    if not level_raw.strip() and action in {"on", "toggle"}:
+        poll_before, _ = poll_board_with_retry(entity["address"], attempts=1, delay_s=0.05)
     prev_level = clamp_int(
         to_number(prev.get("level") if isinstance(prev, dict) else 0, 0),
         DIMMER_MIN_LEVEL,
         DIMMER_MAX_LEVEL,
     )
+    if isinstance(poll_before, dict):
+        prev_level = clamp_int(
+            to_number(poll_before.get("dimmerLevel"), prev_level),
+            DIMMER_MIN_LEVEL,
+            DIMMER_MAX_LEVEL,
+        )
     last_on = clamp_int(
         to_number(prev.get("lastOnLevel") if isinstance(prev, dict) else DIMMER_MAX_LEVEL, DIMMER_MAX_LEVEL),
         1,
@@ -1998,15 +2163,17 @@ def api_dimmer(query: dict[str, list[str]]) -> dict[str, Any]:
             target_level = DIMMER_MIN_LEVEL if prev_level > 0 else last_on
         resolved_action = action
 
-    frame = send_frame(entity["address"], DIMMER_COMMAND, [DIMMER_SET_KEY, target_level])
+    frame = send_frame(
+        entity["address"],
+        DIMMER_COMMAND,
+        [DIMMER_SET_KEY, target_level],
+        expected_g={0: DIMMER_SET_KEY, 1: target_level},
+    )
+    assert isinstance(frame, dict)
 
-    poll = None
-    try:
-        poll = poll_board(entity["address"])
-    except Exception:
-        poll = None
+    poll, poll_error = poll_board_with_retry(entity["address"], attempts=1)
 
-    final_level = target_level
+    final_level = frame_g_byte(frame, 1)
     if isinstance(poll, dict):
         final_level = clamp_int(
             to_number(poll.get("dimmerLevel"), target_level),
@@ -2036,6 +2203,11 @@ def api_dimmer(query: dict[str, list[str]]) -> dict[str, Any]:
         "action": resolved_action,
         "level": final_level,
         "frame": frame,
+        "verification": {
+            "acknowledged": True,
+            "pollVerified": isinstance(poll, dict),
+            "pollError": poll_error,
+        },
     }
 
 
@@ -2056,7 +2228,7 @@ def api_shutter(query: dict[str, list[str]]) -> dict[str, Any]:
     if entity is None:
         raise LookupError("Tapparella non trovata")
 
-    frame = send_frame(entity["address"], 0x5C, [entity["channel"], code])
+    frame = send_frame(entity["address"], 0x5C, [entity["channel"], code], expected_g={0: entity["channel"], 1: code})
     now = int(time.time() * 1000)
 
     def mutator(state: dict[str, Any]) -> None:
@@ -2065,7 +2237,13 @@ def api_shutter(query: dict[str, list[str]]) -> dict[str, Any]:
 
     update_state(mutator)
 
-    return {"ok": True, "entity": entity, "action": action, "frame": frame}
+    return {
+        "ok": True,
+        "entity": entity,
+        "action": action,
+        "frame": frame,
+        "verification": {"acknowledged": isinstance(frame, dict), "pollVerified": False},
+    }
 
 
 def api_thermostat(query: dict[str, list[str]]) -> dict[str, Any]:
@@ -2121,7 +2299,9 @@ def api_thermostat(query: dict[str, list[str]]) -> dict[str, Any]:
 
     if requested_mode is not None:
         mode_byte = 1 if requested_mode == "summer" else 0
-        mode_frame = send_frame(entity["address"], 0x6B, [mode_byte])
+        mode_expected = 1 if requested_mode == "summer" else (0, 0xFF)
+        mode_frame = send_frame(entity["address"], 0x6B, [mode_byte], expected_g={0: mode_expected})
+        assert isinstance(mode_frame, dict)
         frames.append({"type": "mode", "frame": mode_frame})
         next_mode = requested_mode
 
@@ -2129,42 +2309,40 @@ def api_thermostat(query: dict[str, list[str]]) -> dict[str, Any]:
         next_setpoint = requested_setpoint
 
     if requested_power is False:
-        off_frame = send_frame(entity["address"], 0x5A, [0, 0])
+        off_frame = send_frame(entity["address"], 0x5A, [0, 0], expected_g={0: 0, 1: 0})
+        assert isinstance(off_frame, dict)
         frames.append({"type": "power_off", "frame": off_frame})
         next_power = False
     else:
         if requested_setpoint is not None:
             i, d = split_temperature(next_setpoint)
-            set_frame = send_frame(entity["address"], 0x5A, [i, d])
+            set_frame = send_frame(entity["address"], 0x5A, [i, d], expected_g={0: i, 1: d})
+            assert isinstance(set_frame, dict)
             frames.append({"type": "setpoint", "frame": set_frame})
             next_power = True
         elif requested_power is True:
             i, d = split_temperature(next_setpoint)
-            on_frame = send_frame(entity["address"], 0x5A, [i, d])
+            on_frame = send_frame(entity["address"], 0x5A, [i, d], expected_g={0: i, 1: d})
+            assert isinstance(on_frame, dict)
             frames.append({"type": "power_on", "frame": on_frame})
             next_power = True
 
+    poll, poll_error = poll_board_with_retry(entity["address"], attempts=1)
     now = int(time.time() * 1000)
 
     def mutator(state: dict[str, Any]) -> None:
         prev_active = prev.get("isActive") if isinstance(prev, dict) else None
-        if not isinstance(prev_active, bool):
-            prev_active = next_power
+        active = infer_thermostat_active(entity["channel"], poll, prev_active)
         state.setdefault("thermostats", {})[entity["id"]] = {
             "setpoint": next_setpoint,
             "mode": next_mode,
             "isOn": next_power,
-            "isActive": prev_active,
+            "isActive": active,
             "updatedAt": now,
         }
         state["updatedAt"] = now
 
     update_state(mutator)
-
-    try:
-        poll_board(entity["address"])
-    except Exception:
-        pass
 
     first_frame = frames[0]["frame"] if frames else None
     return {
@@ -2175,6 +2353,11 @@ def api_thermostat(query: dict[str, list[str]]) -> dict[str, Any]:
         "isOn": next_power,
         "frame": first_frame,
         "frames": frames,
+        "verification": {
+            "acknowledged": bool(frames),
+            "pollVerified": isinstance(poll, dict),
+            "pollError": poll_error,
+        },
     }
 
 
@@ -2195,6 +2378,8 @@ def api_program_address(query: dict[str, list[str]]) -> dict[str, Any]:
         raise RuntimeError("Nessun ACK ricevuto")
 
     ack = int(response[0])
+    if ack != address:
+        raise RuntimeError(f"ACK indirizzo inatteso: atteso {to_hex(address)}, ricevuto {to_hex(ack)}")
     return {
         "ok": True,
         "programmedAddress": address,
@@ -2355,6 +2540,35 @@ class AlgoHandler(BaseHTTPRequestHandler):
                 self.send_response(HTTPStatus.MOVED_PERMANENTLY)
                 self.send_header("Location", "/")
                 self.end_headers()
+                return
+
+            if self.command == "GET" and path == "/esp32":
+                self.send_response(HTTPStatus.MOVED_PERMANENTLY)
+                self.send_header("Location", "/esp32_flash.html")
+                self.end_headers()
+                return
+
+            if self.command == "GET" and path == "/esp32_flash.html":
+                self._serve_file(
+                    PUBLIC_DIR / "esp32_flash.html",
+                    "text/html; charset=utf-8",
+                    "no-cache, max-age=0, must-revalidate",
+                )
+                return
+
+            if self.command == "GET" and path.startswith("/esp32/"):
+                rel = path[len("/esp32/") :]
+                rel_path = Path(rel)
+                if not rel or rel_path.is_absolute() or ".." in rel_path.parts:
+                    self._json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "Percorso non valido"})
+                    return
+                base_dir = (PUBLIC_DIR / "esp32").resolve()
+                file_path = (base_dir / rel_path).resolve()
+                if file_path != base_dir and base_dir not in file_path.parents:
+                    self._json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "Percorso non valido"})
+                    return
+                content_type = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
+                self._serve_file(file_path, content_type, "public, max-age=86400")
                 return
 
             if self.command == "GET" and path == "/manifest.webmanifest":
